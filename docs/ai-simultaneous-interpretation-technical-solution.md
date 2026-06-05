@@ -146,7 +146,7 @@ flowchart LR
 
 ### 6.2 后端
 
-推荐：Node.js + TypeScript + Fastify。
+推荐：Go 标准库 HTTP 服务 + SQLite 起步。
 
 后端职责：
 
@@ -159,7 +159,7 @@ flowchart LR
 - 缓存音频片段和字幕上下文，用于后台修正。
 - 处理上传文件、录音识别和回放字幕。
 
-如果首版想更快落地，也可以用 Next.js API routes 承载普通接口，但 AST Bridge 和音频 WebSocket 建议独立 Fastify 服务，避免和前端构建框架耦合。
+如果首版想更快落地，也可以用 Next.js API routes 承载少量普通页面接口，但 AST Bridge、上传处理和音频 WebSocket 建议放在独立 Go 服务中，避免和前端构建框架耦合。
 
 ### 6.3 存储
 
@@ -567,7 +567,7 @@ GET /api/uploads/:id/result
 ### M1：豆包链路设计和项目骨架
 
 - 完成本文档。
-- 初始化 Next.js + TypeScript + Fastify。
+- 初始化 Next.js + TypeScript + Go 后端。
 - 配置豆包环境变量。
 - 定义内部事件协议。
 

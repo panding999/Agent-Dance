@@ -1,0 +1,76 @@
+# Dependencies
+node_modules/
+vendor/
+
+# Frontend build outputs
+.next/
+out/
+dist/
+build/
+.turbo/
+.vite/
+coverage/
+
+# Go build and test outputs
+bin/
+*.exe
+*.test
+*.out
+*.prof
+coverage.out
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets/
+
+# Local databases and runtime state
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+data/
+runtime/
+
+# User uploads, media, cache, and generated demo artifacts
+uploads/
+tmp/
+temp/
+cache/
+logs/
+*.log
+*.wav
+*.mp3
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.aac
+*.ogg
+*.flac
+
+# Keep small curated demo metadata in the repo, not large media files.
+!docs/
+!docs/**/*.md
+!README.md
+
+# Local agent/editor state
+.agent/
+.superpowers/
+.codex/
+.worktrees/
+worktrees/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
