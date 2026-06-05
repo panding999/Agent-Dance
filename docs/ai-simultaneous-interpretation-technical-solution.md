@@ -203,9 +203,85 @@ flowchart LR
 
 如果 `gpt-realtime-translate` 已经返回可用中文音频，首版可直接播放其远端音频轨。独立 TTS 队列用于更好控制语速、音色、过期丢弃和字幕一致性。
 
-## 8. 实时处理流程
+## 8. 豆包/火山引擎替代性评估
 
-### 8.1 会话初始化
+结论：豆包语音同传模型可以作为 OpenAI 实时同传链路的替代供应商，但不是接口级的一比一替换。首版架构应抽象出 `InterpretationProvider`，使 OpenAI 和豆包共享统一的内部事件协议。
+
+### 8.1 可替代的能力
+
+豆包语音同传模型支持语音到文本（S2T）和语音到语音（S2S）两种模式，适合替代本方案中的 `gpt-realtime-translate` 主链路：
+
+- S2T：语音流式输入，返回翻译后的文本，可用于实时中文字幕。
+- S2S：语音流式输入，返回翻译后的目标语音，可用于中文语音播报。
+- 支持源文字幕事件、译文字幕事件、TTS 音频事件、会话成功/失败事件。
+- 支持热词、替换词、术语表等干预配置，能覆盖本方案的术语一致性需求。
+
+豆包大模型录音文件识别可替代上传回放模式中的 `gpt-4o-transcribe` 或 `gpt-4o-mini-transcribe`，用于非实时音频转写和后台复核。豆包语音合成也可替代独立 TTS 队列。
+
+### 8.2 不能直接替代的部分
+
+豆包方案和 OpenAI 方案的主要差异在接入协议和客户端模型：
+
+| 能力 | OpenAI 方案 | 豆包/火山引擎方案 | 影响 |
+| --- | --- | --- | --- |
+| 实时接入 | 浏览器可用 WebRTC 短期会话 | WebSocket 二进制 protobuf 协议 | 前端不能直接复用 OpenAI WebRTC 代码，需要后端代理 |
+| 浏览器安全 | 后端创建短期凭证，浏览器建连 | 建连需要 App Key / Resource ID 等鉴权头 | 不应把密钥暴露到浏览器，建议后端统一连接豆包 |
+| 音频格式 | Realtime 支持浏览器音频链路 | AST 要求 16kHz、16bit、单声道 wav/raw，建议 80ms 一包 | 需要前端或后端做重采样、转码和分包 |
+| 事件结构 | transcript delta、translated audio 等模型事件 | SourceSubtitle / TranslationSubtitle / TTS 等事件 | 需要事件适配器归一化 |
+| 语言覆盖 | 面向多语言实时翻译 | S2S 主要 8 种语言，S2T 约 20 种外语；非中英互译要求源或目标包含中文/英文 | 对“任意外语到中文”需按语言表限制展示 |
+| 字幕修正 | 仍建议业务层实现 revision | 未看到直接“回滚修正旧字幕”的标准事件 | 自动修正仍需本方案的后台复核和 revision 引擎 |
+
+### 8.3 推荐替换架构
+
+保留原有三条链路，但把供应商能力放到 provider 层：
+
+```mermaid
+flowchart LR
+  Client[Web Client] --> Backend[Backend Gateway]
+  Backend --> Provider{InterpretationProvider}
+  Provider --> OpenAI[OpenAI Realtime Translation]
+  Provider --> Doubao[Doubao AST WebSocket]
+  OpenAI --> Normalizer[Internal Event Normalizer]
+  Doubao --> Normalizer
+  Normalizer --> Subtitle[segment.partial / segment.final / segment.revision]
+  Normalizer --> Voice[audio.delta / tts.done]
+```
+
+统一内部事件：
+
+```ts
+type InterpretationEvent =
+  | { type: "segment.partial"; segmentId: string; text: string; sourceText?: string; startMs?: number }
+  | { type: "segment.final"; segmentId: string; text: string; sourceText?: string; startMs?: number; endMs?: number }
+  | { type: "segment.revision"; segmentId: string; before: string; after: string; reason: string }
+  | { type: "audio.delta"; segmentId?: string; audio: ArrayBuffer; codec: string }
+  | { type: "session.error"; code: string; message: string };
+```
+
+豆包事件映射：
+
+- `SourceSubtitleResponse` -> `segment.partial.sourceText`
+- `SourceSubtitleEnd` -> `segment.final.sourceText`
+- `TranslationSubtitleResponse` -> `segment.partial.text`
+- `TranslationSubtitleEnd` -> `segment.final.text`
+- `TTSResponse` -> `audio.delta`
+- `SessionFailed` -> `session.error`
+
+### 8.4 推荐判断
+
+如果项目比赛展示主要在中国网络环境、团队已有火山引擎账号，推荐把豆包作为首选或至少作为 OpenAI 的并列 provider。原因是它提供端到端同传、字幕、语音和术语干预能力，目标场景高度匹配。
+
+如果重点是最快做出浏览器实时原型，OpenAI WebRTC 接入仍更直接。豆包替换会增加后端网关、protobuf、音频重采样和事件适配工作量。
+
+本项目建议采用双 provider 设计：
+
+- 第一阶段：OpenAI provider 跑通浏览器低延迟主流程。
+- 第二阶段：接入 Doubao provider，作为国内网络和成本侧的替代方案。
+- 比赛展示：根据账号权限、网络质量和语言需求选择 provider。
+
+## 9. 实时处理流程
+
+### 9.1 会话初始化
 
 1. 前端请求 `POST /api/sessions` 创建业务会话。
 2. 后端记录用户配置：源语言、目标语言、术语表、是否开启语音。
@@ -213,7 +289,7 @@ flowchart LR
 4. 后端使用标准 API key 调用 OpenAI，创建短期 client secret 或 unified WebRTC session。
 5. 前端使用短期凭证建立 WebRTC 连接。
 
-### 8.2 字幕生成
+### 9.2 字幕生成
 
 1. Realtime Translation 返回 transcript delta。
 2. `EventHub` 将原始 AI 事件归一化为内部事件：
@@ -225,7 +301,7 @@ flowchart LR
 3. `SubtitleStabilizer` 按标点、停顿、最大长度和时间窗口合并 delta。
 4. UI 显示最新 2-3 行字幕，历史区显示完整时间轴。
 
-### 8.3 字幕稳定策略
+### 9.3 字幕稳定策略
 
 字幕段进入 UI 时分三类：
 
@@ -240,7 +316,7 @@ flowchart LR
 - 或静音超过阈值。
 - 或字幕长度超过阈值，需要强制切段。
 
-### 8.4 自动修正
+### 9.4 自动修正
 
 系统必须能纠正之前识别或翻译的错误。首版采用“事件化修正”，不直接粗暴覆盖字幕。
 
@@ -271,7 +347,7 @@ flowchart LR
 }
 ```
 
-## 9. 术语和上下文管理
+## 10. 术语和上下文管理
 
 技术演讲经常包含产品名、库名、缩写和人名。首版应支持轻量术语表：
 
@@ -282,7 +358,7 @@ flowchart LR
 
 术语表不是为了追求复杂知识库，而是为比赛展示提供清晰亮点：同一技术词在整场演讲中翻译一致。
 
-## 10. 上传回放模式
+## 11. 上传回放模式
 
 上传模式是实时演示的兜底，也能展示更高质量的纠错能力。
 
@@ -297,9 +373,9 @@ flowchart LR
 
 上传文件大小超过接口限制时，必须按句子或静音边界切分，避免从句中间切断导致上下文丢失。
 
-## 11. API 设计草案
+## 12. API 设计草案
 
-### 11.1 会话
+### 12.1 会话
 
 ```http
 POST /api/sessions
@@ -319,7 +395,7 @@ PATCH /api/sessions/:id
 }
 ```
 
-### 11.2 实时连接
+### 12.2 实时连接
 
 ```http
 POST /api/realtime/translation-session
@@ -329,7 +405,7 @@ GET /api/sessions/:id/events
 
 `/events` 可用 SSE 或 WebSocket 推送内部事件。首版推荐 SSE：实现简单，适合单向推送字幕事件。音频连接仍走 WebRTC。
 
-### 11.3 字幕与修正
+### 12.3 字幕与修正
 
 ```http
 GET /api/sessions/:id/segments
@@ -339,7 +415,7 @@ GET /api/sessions/:id/revisions
 
 后台自动修正使用同一套 revision 数据结构。未来可以允许用户手动改字幕，作为人工修正事件。
 
-### 11.4 上传
+### 12.4 上传
 
 ```http
 POST /api/uploads
@@ -347,7 +423,7 @@ POST /api/uploads/:id/transcribe
 GET /api/uploads/:id/result
 ```
 
-## 12. 前端界面结构
+## 13. 前端界面结构
 
 首版页面建议只有一个主工作台，不做营销式落地页：
 
@@ -363,9 +439,9 @@ GET /api/uploads/:id/result
 - 修正发生时不闪屏、不大幅跳动，只给旧段落添加短暂高亮。
 - 中文语音播报有明确 AI 语音提示，符合语音合成披露要求。
 
-## 13. 延迟、质量和成本目标
+## 14. 延迟、质量和成本目标
 
-### 13.1 延迟目标
+### 14.1 延迟目标
 
 - 字幕首字延迟：1-3 秒。
 - 稳定字幕延迟：2-5 秒。
@@ -374,21 +450,21 @@ GET /api/uploads/:id/result
 
 原则：字幕优先于语音，实时性优先于一次性完美。修正能力用于弥补早期低延迟输出的错误。
 
-### 13.2 质量目标
+### 14.2 质量目标
 
 - 技术词翻译一致。
 - 数字、单位、人名、产品名优先纠错。
 - 修正历史可追溯。
 - 上传回放模式质量高于实时模式。
 
-### 13.3 成本控制
+### 14.3 成本控制
 
 - 实时模式按会话计时，前端需要展示会话时长和 API 状态。
 - 静音时降低无效音频发送或让模型保留静音但避免额外复核。
 - TTS 默认关闭或仅播报稳定字幕。
 - 后台复核只处理低置信、含数字/术语、或用户关注的片段。
 
-## 14. 安全与隐私
+## 15. 安全与隐私
 
 - 标准 OpenAI API key 只存后端环境变量，不能下发到浏览器。
 - 浏览器只拿短期 client secret 或通过后端 unified session 建连。
@@ -397,7 +473,7 @@ GET /api/uploads/:id/result
 - 日志不记录完整 API key、短期 token 或敏感原文。
 - TTS 播报需要在 UI 明确提示“AI 生成语音”。
 
-## 15. 错误处理
+## 16. 错误处理
 
 常见错误与处理：
 
@@ -408,21 +484,21 @@ GET /api/uploads/:id/result
 - TTS 队列积压：丢弃过期语音，保证不读很久以前的句子。
 - 后台复核冲突：只保留最新 revision，但 revision 历史可展开。
 
-## 16. 测试与评估
+## 17. 测试与评估
 
-### 16.1 单元测试
+### 17.1 单元测试
 
 - 字幕稳定器：delta 合并、强制切段、final 更新。
 - 修正引擎：差异检测、数字变化、术语命中、轻微差异忽略。
 - TTS 队列：过期丢弃、暂停/恢复、开关状态。
 
-### 16.2 集成测试
+### 17.2 集成测试
 
 - 创建会话后能拿到实时连接配置。
 - 模拟 AI 事件流后 UI 能显示 partial/stable/revised。
 - 上传音频后生成 segments 和 revisions。
 
-### 16.3 演示评估
+### 17.3 演示评估
 
 准备 3 类样例：
 
@@ -437,7 +513,7 @@ GET /api/uploads/:id/result
 - 修正是否合理且不干扰阅读。
 - 专名和数字是否明显优于无修正版本。
 
-## 17. 里程碑
+## 18. 里程碑
 
 ### M1：技术方案和项目骨架
 
@@ -471,7 +547,7 @@ GET /api/uploads/:id/result
 - 加入延迟、状态、修正说明面板。
 - 完成 README、部署说明和演示脚本。
 
-## 18. 主要风险
+## 19. 主要风险
 
 - **实时翻译模型可用性和账号权限**：不同账号可能有不同模型权限。实现时需要在环境检查中明确模型可用性，并提供降级路径。
 - **现场网络不稳定**：上传模式必须可用，演示素材要提前准备。
@@ -479,7 +555,7 @@ GET /api/uploads/:id/result
 - **TTS 延迟影响理解**：TTS 默认不阻塞字幕，可丢弃过期内容。
 - **系统音频捕获复杂**：首版不承诺，后续作为桌面版扩展。
 
-## 19. 参考资料
+## 20. 参考资料
 
 - OpenAI Realtime Translation guide: https://developers.openai.com/api/docs/guides/realtime-translation
 - OpenAI Realtime Transcription guide: https://developers.openai.com/api/docs/guides/realtime-transcription
@@ -489,3 +565,8 @@ GET /api/uploads/:id/result
 - OpenAI `gpt-realtime-translate` model page: https://developers.openai.com/api/docs/models/gpt-realtime-translate
 - OpenAI `gpt-realtime-whisper` model page: https://developers.openai.com/api/docs/models/gpt-realtime-whisper
 - OpenAI `gpt-4o-mini-tts` model page: https://developers.openai.com/api/docs/models/gpt-4o-mini-tts
+- 豆包语音同传产品简介: https://www.volcengine.com/docs/6561/1631605
+- 豆包同声传译 2.0 API 接入文档: https://www.volcengine.com/docs/6561/1756902
+- 豆包语音识别大模型产品简介: https://www.volcengine.com/docs/6561/1354871
+- 豆包大模型录音文件极速版识别 API: https://www.volcengine.com/docs/6561/1631584
+- 豆包语音合成大模型: https://www.volcengine.com/docs/6561/1257536
