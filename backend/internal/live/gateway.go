@@ -44,12 +44,12 @@ type Event struct {
 
 type Gateway struct {
 	store *store.SQLiteStore
-	cache *audio.ChunkCache
+	cache *audio.SessionChunkCache
 }
 
-func NewGateway(st *store.SQLiteStore, cache *audio.ChunkCache) *Gateway {
+func NewGateway(st *store.SQLiteStore, cache *audio.SessionChunkCache) *Gateway {
 	if cache == nil {
-		cache = audio.NewChunkCache(256)
+		cache = audio.NewSessionChunkCache(256)
 	}
 	return &Gateway{store: st, cache: cache}
 }
@@ -75,11 +75,31 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "get session failed", http.StatusInternalServerError)
 		return
 	}
+	if session.Status != store.SessionStatusCreated {
+		http.Error(w, "session is not connectable", http.StatusConflict)
+		return
+	}
+	if err := g.store.StartSession(r.Context(), session.ID); err != nil {
+		if errors.Is(err, store.ErrSessionNotConnectable) {
+			http.Error(w, "session is not connectable", http.StatusConflict)
+			return
+		}
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "start session failed", http.StatusInternalServerError)
+		return
+	}
 
 	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
+		defer cancel()
+		_ = g.store.CloseSession(ctx, session.ID)
 		return
 	}
+	conn.SetReadLimit(audio.BrowserFrameHeaderSize + audio.MaxBrowserFramePCMBytes)
 	defer conn.Close(websocket.StatusNormalClosure, "session closed")
 	pingCtx, stopPing := context.WithCancel(r.Context())
 	defer stopPing()
@@ -122,7 +142,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		hasSequence = true
 		lastSequence = frame.Sequence
-		g.cache.Add(frame)
+		g.cache.Add(session.ID, frame)
 
 		if err := writeEvent(r.Context(), conn, Event{
 			Type:     EventAudioFrameAccepted,

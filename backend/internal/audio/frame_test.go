@@ -46,6 +46,17 @@ func TestParseBrowserFrameRejectsOddPCMBytes(t *testing.T) {
 	}
 }
 
+func TestParseBrowserFrameRejectsOversizedPCM(t *testing.T) {
+	raw := make([]byte, BrowserFrameHeaderSize+MaxBrowserFramePCMBytes+2)
+	binary.LittleEndian.PutUint32(raw[0:4], 1)
+	binary.LittleEndian.PutUint64(raw[4:12], 100)
+
+	_, err := ParseBrowserFrame(raw)
+	if !errors.Is(err, ErrFrameTooLarge) {
+		t.Fatalf("ParseBrowserFrame() error = %v, want ErrFrameTooLarge", err)
+	}
+}
+
 func TestChunkCacheKeepsMostRecentFrames(t *testing.T) {
 	cache := NewChunkCache(2)
 	cache.Add(PCMFrame{Sequence: 1, TimestampMS: 10, PCM: []byte{1, 0}})
@@ -64,5 +75,28 @@ func TestChunkCacheKeepsMostRecentFrames(t *testing.T) {
 	again := cache.Recent()
 	if again[0].PCM[0] == 99 {
 		t.Fatal("Recent() returned mutable cached PCM slice")
+	}
+}
+
+func TestSessionChunkCacheSeparatesSessions(t *testing.T) {
+	cache := NewSessionChunkCache(2)
+	cache.Add("session-a", PCMFrame{Sequence: 1, TimestampMS: 10, PCM: []byte{1, 0}})
+	cache.Add("session-b", PCMFrame{Sequence: 1, TimestampMS: 20, PCM: []byte{2, 0}})
+	cache.Add("session-a", PCMFrame{Sequence: 2, TimestampMS: 30, PCM: []byte{3, 0}})
+
+	aFrames := cache.Recent("session-a")
+	if len(aFrames) != 2 {
+		t.Fatalf("session-a frames = %d, want 2", len(aFrames))
+	}
+	if aFrames[0].PCM[0] != 1 || aFrames[1].PCM[0] != 3 {
+		t.Fatalf("session-a PCM = [%d %d], want [1 3]", aFrames[0].PCM[0], aFrames[1].PCM[0])
+	}
+
+	bFrames := cache.Recent("session-b")
+	if len(bFrames) != 1 {
+		t.Fatalf("session-b frames = %d, want 1", len(bFrames))
+	}
+	if bFrames[0].PCM[0] != 2 {
+		t.Fatalf("session-b PCM = %d, want 2", bFrames[0].PCM[0])
 	}
 }

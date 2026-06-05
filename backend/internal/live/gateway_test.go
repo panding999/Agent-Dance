@@ -19,7 +19,7 @@ import (
 func TestGatewayAcceptsValidAudioFrame(t *testing.T) {
 	ctx := context.Background()
 	st, session := newLiveTestStore(t)
-	cache := audio.NewChunkCache(4)
+	cache := audio.NewSessionChunkCache(4)
 	server := httptest.NewServer(NewGateway(st, cache))
 	defer server.Close()
 
@@ -46,7 +46,7 @@ func TestGatewayAcceptsValidAudioFrame(t *testing.T) {
 		t.Fatalf("accepted sequence = %d", accepted.Sequence)
 	}
 
-	recent := cache.Recent()
+	recent := cache.Recent(session.ID)
 	if len(recent) != 1 {
 		t.Fatalf("cached frames = %d, want 1", len(recent))
 	}
@@ -57,7 +57,7 @@ func TestGatewayAcceptsValidAudioFrame(t *testing.T) {
 
 func TestGatewayRejectsMissingSessionID(t *testing.T) {
 	st, _ := newLiveTestStore(t)
-	gateway := NewGateway(st, audio.NewChunkCache(4))
+	gateway := NewGateway(st, audio.NewSessionChunkCache(4))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/live/ws", nil)
@@ -71,7 +71,7 @@ func TestGatewayRejectsMissingSessionID(t *testing.T) {
 func TestGatewayRejectsMalformedFrame(t *testing.T) {
 	ctx := context.Background()
 	st, session := newLiveTestStore(t)
-	server := httptest.NewServer(NewGateway(st, audio.NewChunkCache(4)))
+	server := httptest.NewServer(NewGateway(st, audio.NewSessionChunkCache(4)))
 	defer server.Close()
 
 	conn := dialLive(t, server.URL, session.ID)
@@ -94,7 +94,7 @@ func TestGatewayRejectsMalformedFrame(t *testing.T) {
 func TestGatewayRejectsOutOfOrderFrame(t *testing.T) {
 	ctx := context.Background()
 	st, session := newLiveTestStore(t)
-	server := httptest.NewServer(NewGateway(st, audio.NewChunkCache(4)))
+	server := httptest.NewServer(NewGateway(st, audio.NewSessionChunkCache(4)))
 	defer server.Close()
 
 	conn := dialLive(t, server.URL, session.ID)
@@ -121,7 +121,7 @@ func TestGatewayRejectsOutOfOrderFrame(t *testing.T) {
 
 func TestGatewayClosesSessionOnClientClose(t *testing.T) {
 	st, session := newLiveTestStore(t)
-	server := httptest.NewServer(NewGateway(st, audio.NewChunkCache(4)))
+	server := httptest.NewServer(NewGateway(st, audio.NewSessionChunkCache(4)))
 	defer server.Close()
 
 	conn := dialLive(t, server.URL, session.ID)
@@ -147,6 +147,55 @@ func TestGatewayClosesSessionOnClientClose(t *testing.T) {
 		t.Fatalf("GetSession() error = %v", err)
 	}
 	t.Fatalf("session status = %q closed_at = %v, want closed with timestamp", got.Status, got.ClosedAt)
+}
+
+func TestGatewayRejectsClosedSession(t *testing.T) {
+	st, session := newLiveTestStore(t)
+	if err := st.CloseSession(context.Background(), session.ID); err != nil {
+		t.Fatalf("CloseSession() error = %v", err)
+	}
+	server := httptest.NewServer(NewGateway(st, audio.NewSessionChunkCache(4)))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/live/ws?sessionId=" + session.ID
+	_, resp, err := websocket.Dial(ctx, wsURL, nil)
+	if err == nil {
+		t.Fatal("dial closed session succeeded, want failure")
+	}
+	if resp == nil || resp.StatusCode != http.StatusConflict {
+		if resp == nil {
+			t.Fatal("dial closed session response is nil, want 409")
+		}
+		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	}
+}
+
+func TestGatewayRejectsDuplicateLiveConnection(t *testing.T) {
+	st, session := newLiveTestStore(t)
+	server := httptest.NewServer(NewGateway(st, audio.NewSessionChunkCache(4)))
+	defer server.Close()
+
+	first := dialLive(t, server.URL, session.ID)
+	defer first.Close(websocket.StatusNormalClosure, "test done")
+	_ = readEvent(t, first)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/live/ws?sessionId=" + session.ID
+	_, resp, err := websocket.Dial(ctx, wsURL, nil)
+	if err == nil {
+		t.Fatal("duplicate dial succeeded, want failure")
+	}
+	if resp == nil || resp.StatusCode != http.StatusConflict {
+		if resp == nil {
+			t.Fatal("duplicate dial response is nil, want 409")
+		}
+		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	}
 }
 
 func newLiveTestStore(t *testing.T) (*store.SQLiteStore, store.Session) {

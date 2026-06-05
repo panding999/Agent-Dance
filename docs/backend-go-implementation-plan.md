@@ -137,11 +137,11 @@ Expected result: gateway tests cover valid frames, malformed frames, out-of-orde
 
 Goal: backend can produce Doubao-compatible audio packets.
 
-- [ ] Implement `audio.PCMFrame`.
-- [ ] Implement `audio.Packetizer` for 80ms packets.
-- [ ] Enforce 16kHz, 16bit, mono.
-- [ ] Add fallback path for non-16kHz input that returns a clear error first.
-- [ ] Keep ffmpeg resampling as a later optional path, not part of first live MVP.
+- [x] Implement `audio.PCMFrame`.
+- [x] Implement `audio.Packetizer` for 80ms packets.
+- [x] Enforce 16kHz, 16bit, mono.
+- [x] Add fallback path for non-16kHz input that returns a clear error first.
+- [x] Keep ffmpeg resampling as a later optional path, not part of first live MVP.
 
 Verification:
 
@@ -149,7 +149,7 @@ Verification:
 go test ./internal/audio
 ```
 
-Expected result: packetizer splits exactly 1280 bytes per 80ms packet at 16kHz Int16 mono.
+Expected result: packetizer splits exactly 2560 bytes per 80ms packet at 16kHz Int16 mono.
 
 ### M4: Doubao AST Bridge
 

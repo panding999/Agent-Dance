@@ -16,7 +16,16 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-var ErrNotFound = errors.New("not found")
+var (
+	ErrNotFound              = errors.New("not found")
+	ErrSessionNotConnectable = errors.New("session is not connectable")
+)
+
+const (
+	SessionStatusCreated = "created"
+	SessionStatusRunning = "running"
+	SessionStatusClosed  = "closed"
+)
 
 type SQLiteStore struct {
 	db *sql.DB
@@ -81,7 +90,7 @@ func (s *SQLiteStore) CreateSession(ctx context.Context, params CreateSessionPar
 		SourceLanguage: strings.TrimSpace(params.SourceLanguage),
 		TargetLanguage: strings.TrimSpace(params.TargetLanguage),
 		VoiceEnabled:   params.VoiceEnabled,
-		Status:         "created",
+		Status:         SessionStatusCreated,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
@@ -131,13 +140,42 @@ func (s *SQLiteStore) GetSession(ctx context.Context, id string) (Session, error
 	return session, nil
 }
 
+func (s *SQLiteStore) StartSession(ctx context.Context, id string) error {
+	now := time.Now().UTC()
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE sessions
+		SET status = ?, updated_at = ?
+		WHERE id = ? AND status = ?
+	`, SessionStatusRunning, formatTime(now), id, SessionStatusCreated)
+	if err != nil {
+		return fmt.Errorf("start session: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("start session rows affected: %w", err)
+	}
+	if rowsAffected > 0 {
+		return nil
+	}
+
+	_, err = s.GetSession(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	return ErrSessionNotConnectable
+}
+
 func (s *SQLiteStore) CloseSession(ctx context.Context, id string) error {
 	now := time.Now().UTC()
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE sessions
 		SET status = ?, updated_at = ?, closed_at = ?
 		WHERE id = ?
-	`, "closed", formatTime(now), formatTime(now), id)
+	`, SessionStatusClosed, formatTime(now), formatTime(now), id)
 	if err != nil {
 		return fmt.Errorf("close session: %w", err)
 	}
@@ -173,7 +211,7 @@ func (s *SQLiteStore) init(ctx context.Context) error {
 }
 
 func (s *SQLiteStore) migrate(ctx context.Context) error {
-	if err := s.ensureColumn(ctx, "sessions", "status", "TEXT NOT NULL DEFAULT 'created'"); err != nil {
+	if err := s.ensureColumn(ctx, "sessions", "status", "TEXT NOT NULL DEFAULT '"+SessionStatusCreated+"'"); err != nil {
 		return err
 	}
 	if err := s.ensureColumn(ctx, "sessions", "closed_at", "TEXT"); err != nil {

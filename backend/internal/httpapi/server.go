@@ -20,7 +20,7 @@ type Server struct {
 func NewServer(st *store.SQLiteStore) *Server {
 	s := &Server{
 		store:       st,
-		liveGateway: live.NewGateway(st, audio.NewChunkCache(256)),
+		liveGateway: live.NewGateway(st, audio.NewSessionChunkCache(256)),
 		mux:         http.NewServeMux(),
 	}
 	s.routes()
