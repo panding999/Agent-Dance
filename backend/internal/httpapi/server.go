@@ -6,18 +6,22 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/panding999/agent-dance/backend/internal/audio"
+	"github.com/panding999/agent-dance/backend/internal/live"
 	"github.com/panding999/agent-dance/backend/internal/store"
 )
 
 type Server struct {
-	store *store.SQLiteStore
-	mux   *http.ServeMux
+	store       *store.SQLiteStore
+	liveGateway *live.Gateway
+	mux         *http.ServeMux
 }
 
 func NewServer(st *store.SQLiteStore) *Server {
 	s := &Server{
-		store: st,
-		mux:   http.NewServeMux(),
+		store:       st,
+		liveGateway: live.NewGateway(st, audio.NewChunkCache(256)),
+		mux:         http.NewServeMux(),
 	}
 	s.routes()
 	return s
@@ -32,6 +36,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/readyz", s.handleReady)
 	s.mux.HandleFunc("/api/sessions", s.handleSessions)
 	s.mux.HandleFunc("/api/sessions/", s.handleSessionByID)
+	s.mux.Handle("/api/live/ws", s.liveGateway)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

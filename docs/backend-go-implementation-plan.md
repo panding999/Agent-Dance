@@ -113,17 +113,17 @@ Expected result: tests pass, server starts, health endpoint returns `200`.
 
 Goal: browser can open a session WebSocket and stream audio frames into the backend without contacting Doubao yet.
 
-- [ ] Add `GET /api/live/ws?sessionId=...`.
-- [ ] Define browser binary audio frame format:
+- [x] Add `GET /api/live/ws?sessionId=...`.
+- [x] Define browser binary audio frame format:
   - 4 bytes sequence number
   - 8 bytes timestamp milliseconds
   - remaining bytes Int16 PCM little-endian
-- [ ] Define server JSON event format for state changes.
-- [ ] Validate sequence ordering.
-- [ ] Validate sample size and mono PCM alignment.
-- [ ] Store recent frames in `audio.ChunkCache`.
-- [ ] Add ping/pong timeout.
-- [ ] Add close handling that marks session closed.
+- [x] Define server JSON event format for state changes.
+- [x] Validate sequence ordering.
+- [x] Validate sample size and mono PCM alignment.
+- [x] Store recent frames in `audio.ChunkCache`.
+- [x] Add ping/pong timeout.
+- [x] Add close handling that marks session closed.
 
 Verification:
 
