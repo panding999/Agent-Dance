@@ -67,5 +67,6 @@ go test ./...
 
 ## 文档
 
+- [后端接口文档](docs/backend-api-reference.md)
 - [AI 同声传译助手技术方案](docs/ai-simultaneous-interpretation-technical-solution.md)
 - [Go 后端实施拆解](docs/backend-go-implementation-plan.md)
