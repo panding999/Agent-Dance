@@ -187,14 +187,14 @@ Expected result: AST client unit tests pass with a fake WebSocket server. Real p
 
 Goal: Doubao AST events are converted into app-level events that the frontend can consume.
 
-- [ ] Define `subtitle.InterpretationEvent`.
-- [ ] Map `SourceSubtitleResponse` to `segment.partial.sourceText`.
-- [ ] Map `SourceSubtitleEnd` to source final metadata.
-- [ ] Map `TranslationSubtitleResponse` to `segment.partial.text`.
-- [ ] Map `TranslationSubtitleEnd` to `segment.final`.
-- [ ] Map `TTSResponse` to `audio.delta`.
-- [ ] Map `SessionFailed` to `session.error`.
-- [ ] Store provider event summaries for debugging.
+- [x] Define `subtitle.InterpretationEvent`.
+- [x] Map `SourceSubtitleResponse` to `segment.partial.sourceText`.
+- [x] Map `SourceSubtitleEnd` to source final metadata.
+- [x] Map `TranslationSubtitleResponse` to `segment.partial.text`.
+- [x] Map `TranslationSubtitleEnd` to `segment.final`.
+- [x] Map `TTSResponse` to `audio.delta`.
+- [x] Map `SessionFailed` to `session.error`.
+- [x] Store provider event summaries for debugging.
 
 Verification:
 

@@ -2,8 +2,10 @@ package ast
 
 type ProviderEvent struct {
 	Event          EventType
+	SegmentID      string
 	Text           string
 	Data           []byte
+	AudioCodec     string
 	StartTimeMS    int64
 	EndTimeMS      int64
 	SpeakerChanged bool
