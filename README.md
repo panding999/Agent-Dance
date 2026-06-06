@@ -1,7 +1,72 @@
-# Agent-Dance
-AI 同声传译助手，帮助用户降低语言门槛，提升信息获取效率。
+# Agent Dance
+
+Agent Dance 是一款面向英语演讲、技术分享、国际会议、网课和会议录制的 AI 同声传译助手。系统将单向外语音频流实时转换为中文字幕，并在后续上下文确认后自动回写修正早期识别或翻译错误，帮助用户跟上内容节奏。
+
+## 核心能力
+
+- 实时同传：浏览器采集麦克风音频，经后端网关接入同声传译模型，实时输出中文字幕。
+- 上传回放：上传音频或视频文件后生成带时间轴的中文字幕；视频模式支持在播放画面底部叠加字幕。
+- 自动纠错：当后续上下文确认术语、专名、数字或长句翻译有误时，系统生成修正事件并保留前后对比。
+- 统一事件协议：前端消费统一的字幕事件，后端负责音频格式、模型协议、鉴权和修正逻辑。
+
+## 技术栈
+
+- 前端：Next.js App Router、React、TypeScript、Tailwind CSS、Motion、Phosphor Icons。
+- 后端：Go HTTP/WebSocket 网关，负责会话管理、实时音频链路、上传处理和字幕事件输出。
+- 存储：SQLite 起步，后续可按部署需要迁移到 PostgreSQL。
+- 外部依赖：Doubao/火山引擎同声传译与语音识别能力，上传处理链路依赖 ffmpeg。
+
+## 项目结构
+
+```text
+app/                         Next.js 页面入口与全局样式
+components/                  前端工作台组件
+backend/                     Go 后端服务
+docs/                        技术方案与后端实施拆解
+PRODUCT.md                   产品定位与界面设计原则
+AGENTS.md                    协作、提交和验证规范
+```
+
+## 本地启动
+
+安装前端依赖并启动页面：
+
+```powershell
+npm install
+npm run dev
+```
+
+构建与静态检查：
+
+```powershell
+npm run lint
+npm run build
+```
+
+启动后端服务：
+
+```powershell
+cd backend
+go run ./cmd/server
+```
+
+后端测试：
+
+```powershell
+cd backend
+go test ./...
+```
+
+## 接口概览
+
+- `POST /api/sessions`：创建同传会话。
+- `GET /api/sessions/{id}`：查询会话状态。
+- `GET /api/live/ws`：实时音频与字幕事件 WebSocket。
+
+前端当前使用产品化 mock 数据展示实时同传、上传回放和自动纠错流程；后续联调时将工作台的数据源替换为后端会话和 WebSocket 事件。
 
 ## 文档
 
+- [后端接口文档](docs/backend-api-reference.md)
 - [AI 同声传译助手技术方案](docs/ai-simultaneous-interpretation-technical-solution.md)
 - [Go 后端实施拆解](docs/backend-go-implementation-plan.md)

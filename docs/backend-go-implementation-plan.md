@@ -334,9 +334,9 @@ go test ./internal/doubao/tts ./internal/live
 
 Expected result: queued audio skips stale segments and only plays current stable subtitles.
 
-### M12: Observability and Demo Readiness
+### M12: Observability and Operational Readiness
 
-Goal: failures are diagnosable during a live demo.
+Goal: failures are diagnosable during live sessions and upload processing.
 
 - [ ] Add structured logs for session id, provider logid, state, and latency.
 - [ ] Add metrics for:
@@ -345,9 +345,9 @@ Goal: failures are diagnosable during a live demo.
   - final subtitle latency
   - repair queue length
   - upload processing duration
-- [ ] Add `/api/sessions/:id/debug` for local demo diagnostics.
+- [ ] Add `/api/sessions/:id/debug` for local diagnostics.
 - [ ] Redact secrets from all logs.
-- [ ] Add demo fixture scripts.
+- [ ] Add fixture scripts for repeatable verification.
 
 Verification:
 
@@ -370,9 +370,9 @@ Expected result: all backend tests pass and logs show provider logid without exp
 9. M9: Upload processing.
 10. M10: Background repair.
 11. M11: TTS queue.
-12. M12: Observability and demo readiness.
+12. M12: Observability and operational readiness.
 
-This order produces a working demo early: after M7, the app can already show real-time subtitles. M8-M12 add quality, fallback, and presentation polish.
+This order produces an end-to-end live path early: after M7, the app can already show real-time subtitles. M8-M12 add quality, upload fallback, and operational polish.
 
 ## 4. First Coding Sprint
 
@@ -403,7 +403,7 @@ Before real Doubao smoke testing, prepare:
 - `DOUBAO_AST_MODEL_ID` set locally to the Seed LiveInterpret 2.0 model id
 - `DOUBAO_AUC_RESOURCE_ID=volc.bigasr.auc_turbo`
 - confirmed language pair, for example `en -> zh`
-- one 30-second English demo clip
+- one 30-second English sample clip
 - one glossary sample, for example `RAG -> 检索增强生成`
 - official AST protobuf generated codec from `protos.tar.gz` or `ast_go_client.zip`
 
