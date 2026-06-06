@@ -22,6 +22,12 @@ type ProviderEventSummary struct {
 type EventNormalizer struct {
 	maxSummaries int
 	summaries    []ProviderEventSummary
+	segments     map[string]*segmentTextState
+}
+
+type segmentTextState struct {
+	sourceText string
+	targetText string
 }
 
 func NewEventNormalizer(maxSummaries int) *EventNormalizer {
@@ -31,12 +37,37 @@ func NewEventNormalizer(maxSummaries int) *EventNormalizer {
 	return &EventNormalizer{
 		maxSummaries: maxSummaries,
 		summaries:    make([]ProviderEventSummary, 0, maxSummaries),
+		segments:     make(map[string]*segmentTextState),
 	}
 }
 
 func (n *EventNormalizer) Map(event ProviderEvent) (subtitle.InterpretationEvent, bool) {
 	n.record(event.Summary())
-	return MapProviderEvent(event)
+
+	switch event.Event {
+	case EventSourceSubtitleStart:
+		n.clearSegmentField(event.SegmentID, true)
+		return subtitle.InterpretationEvent{}, false
+	case EventSourceSubtitleResponse:
+		text := n.mergeSegmentField(event.SegmentID, event.Text, true)
+		return segmentEvent(subtitle.EventSegmentPartial, event.SegmentID, "", text, event.StartTimeMS, event.EndTimeMS), true
+	case EventSourceSubtitleEnd:
+		text := n.mergeSegmentField(event.SegmentID, event.Text, true)
+		n.clearSegmentField(event.SegmentID, true)
+		return segmentEvent(subtitle.EventSegmentFinal, event.SegmentID, "", text, event.StartTimeMS, event.EndTimeMS), true
+	case EventTranslationSubtitleStart:
+		n.clearSegmentField(event.SegmentID, false)
+		return subtitle.InterpretationEvent{}, false
+	case EventTranslationSubtitleResponse:
+		text := n.mergeSegmentField(event.SegmentID, event.Text, false)
+		return segmentEvent(subtitle.EventSegmentPartial, event.SegmentID, text, "", event.StartTimeMS, event.EndTimeMS), true
+	case EventTranslationSubtitleEnd:
+		text := n.mergeSegmentField(event.SegmentID, event.Text, false)
+		n.clearSegmentField(event.SegmentID, false)
+		return segmentEvent(subtitle.EventSegmentFinal, event.SegmentID, text, "", event.StartTimeMS, event.EndTimeMS), true
+	default:
+		return MapProviderEvent(event)
+	}
 }
 
 func (n *EventNormalizer) Summaries() []ProviderEventSummary {
@@ -52,6 +83,66 @@ func (n *EventNormalizer) record(summary ProviderEventSummary) {
 		return
 	}
 	n.summaries = append(n.summaries, summary)
+}
+
+func (n *EventNormalizer) mergeSegmentField(segmentID string, incoming string, source bool) string {
+	if strings.TrimSpace(segmentID) == "" {
+		return incoming
+	}
+	state := n.segmentState(segmentID)
+	if source {
+		state.sourceText = mergeProviderText(state.sourceText, incoming)
+		return state.sourceText
+	}
+	state.targetText = mergeProviderText(state.targetText, incoming)
+	return state.targetText
+}
+
+func (n *EventNormalizer) clearSegmentField(segmentID string, source bool) {
+	if strings.TrimSpace(segmentID) == "" || n.segments == nil {
+		return
+	}
+	state, ok := n.segments[segmentID]
+	if !ok {
+		return
+	}
+	if source {
+		state.sourceText = ""
+	} else {
+		state.targetText = ""
+	}
+	if state.sourceText == "" && state.targetText == "" {
+		delete(n.segments, segmentID)
+	}
+}
+
+func (n *EventNormalizer) segmentState(segmentID string) *segmentTextState {
+	if n.segments == nil {
+		n.segments = make(map[string]*segmentTextState)
+	}
+	state, ok := n.segments[segmentID]
+	if ok {
+		return state
+	}
+	state = &segmentTextState{}
+	n.segments[segmentID] = state
+	return state
+}
+
+func mergeProviderText(previous string, incoming string) string {
+	if incoming == "" {
+		return previous
+	}
+	if previous == "" {
+		return incoming
+	}
+	if strings.HasPrefix(incoming, previous) {
+		return incoming
+	}
+	if strings.HasSuffix(previous, incoming) {
+		return previous
+	}
+	return previous + incoming
 }
 
 func MapProviderEvent(event ProviderEvent) (subtitle.InterpretationEvent, bool) {

@@ -160,6 +160,75 @@ func TestMapProviderEventMapsSessionFailedToSessionError(t *testing.T) {
 	}
 }
 
+func TestEventNormalizerAccumulatesIncrementalTranslationPartials(t *testing.T) {
+	normalizer := NewEventNormalizer(4)
+
+	first, ok := normalizer.Map(ProviderEvent{
+		Event:       EventTranslationSubtitleResponse,
+		SegmentID:   "seg-1",
+		Text:        "我很好",
+		StartTimeMS: 100,
+		EndTimeMS:   800,
+	})
+	if !ok {
+		t.Fatal("first Map() ok = false, want true")
+	}
+	if first.Text != "我很好" {
+		t.Fatalf("first text = %q, want 我很好", first.Text)
+	}
+
+	second, ok := normalizer.Map(ProviderEvent{
+		Event:       EventTranslationSubtitleResponse,
+		SegmentID:   "seg-1",
+		Text:        "。",
+		StartTimeMS: 100,
+		EndTimeMS:   900,
+	})
+	if !ok {
+		t.Fatal("second Map() ok = false, want true")
+	}
+	if second.Text != "我很好。" {
+		t.Fatalf("second text = %q, want 我很好。", second.Text)
+	}
+	if second.SourceText != "" {
+		t.Fatalf("second source_text = %q, want empty", second.SourceText)
+	}
+}
+
+func TestEventNormalizerUsesCompleteEndTextWithoutDuplicatingPartials(t *testing.T) {
+	normalizer := NewEventNormalizer(4)
+
+	_, _ = normalizer.Map(ProviderEvent{
+		Event:     EventSourceSubtitleResponse,
+		SegmentID: "seg-2",
+		Text:      "I'm",
+	})
+	_, _ = normalizer.Map(ProviderEvent{
+		Event:     EventSourceSubtitleResponse,
+		SegmentID: "seg-2",
+		Text:      " fine",
+	})
+	got, ok := normalizer.Map(ProviderEvent{
+		Event:       EventSourceSubtitleEnd,
+		SegmentID:   "seg-2",
+		Text:        "I'm fine.",
+		StartTimeMS: 120,
+		EndTimeMS:   920,
+	})
+	if !ok {
+		t.Fatal("Map() ok = false, want true")
+	}
+	if got.Type != subtitle.EventSegmentFinal {
+		t.Fatalf("type = %q, want %q", got.Type, subtitle.EventSegmentFinal)
+	}
+	if got.SourceText != "I'm fine." {
+		t.Fatalf("source_text = %q, want I'm fine.", got.SourceText)
+	}
+	if got.Text != "" {
+		t.Fatalf("text = %q, want empty", got.Text)
+	}
+}
+
 func TestEventNormalizerStoresProviderEventSummaries(t *testing.T) {
 	normalizer := NewEventNormalizer(2)
 
