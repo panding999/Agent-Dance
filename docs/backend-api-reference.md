@@ -2,7 +2,7 @@
 
 本文档描述 Agent Dance 后端当前已经实现的 HTTP 与 WebSocket 接口，供前端联调、后端开发和测试使用。
 
-> 文档依据：`backend/internal/httpapi`、`backend/internal/live`、`backend/internal/audio`、`backend/internal/store` 当前实现
+> 文档依据：`backend/internal/httpapi`、`backend/internal/live`、`backend/internal/audio`、`backend/internal/store`、`backend/internal/subtitle`、`backend/internal/doubao/ast` 当前实现
 >
 > 默认服务地址：`http://localhost:8080`
 >
@@ -22,12 +22,11 @@
 
 当前尚未实现：
 
-- Doubao AST 接入和真实识别、翻译结果。
-- `segment.partial`、`segment.final`、`segment.revision` 等字幕事件。
 - 音频与视频文件上传接口。
 - 上传处理进度与回放字幕查询接口。
 - 主动结束会话的 HTTP 接口。
-- 鉴权、用户体系、CORS 中间件和限流。
+- 鉴权、用户体系和限流。
+- `segment.revision` 的后台复核生成链路。
 
 ## 2. 服务配置
 
@@ -35,13 +34,17 @@
 
 | 环境变量 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `DOUBAO_APP_KEY` | 是 | 无 | Doubao 应用标识 |
-| `DOUBAO_ACCESS_KEY` | 是 | 无 | Doubao 访问密钥 |
+| `DOUBAO_API_KEY` | 条件必填 | 无 | Doubao API Key；优先使用 |
+| `DOUBAO_APP_ID` | 条件必填 | 无 | 旧版 App 凭据之一 |
+| `DOUBAO_APP_KEY` | 条件必填 | 无 | 旧版 App 凭据之一，也可单独作为鉴权值 |
+| `DOUBAO_ACCESS_KEY` | 条件必填 | 无 | 旧版 App 凭据之一 |
 | `DOUBAO_AST_RESOURCE_ID` | 是 | 无 | 同声传译资源 ID |
+| `DOUBAO_AST_MODEL_ID` | 否 | 无 | 同声传译模型 ID，例如 Seed LiveInterpret 2.0 对应模型 |
 | `DOUBAO_AUC_RESOURCE_ID` | 是 | 无 | 录音文件识别资源 ID |
 | `DATABASE_URL` | 是 | 无 | SQLite 数据库路径，例如 `runtime/agent-dance.db` |
 | `UPLOAD_DIR` | 是 | 无 | 上传文件目录；当前接口尚未使用 |
 | `HTTP_ADDR` | 否 | `:8080` | HTTP 服务监听地址 |
+| `HTTP_ALLOWED_ORIGINS` | 否 | 空 | 允许跨源调用 HTTP 和 WebSocket 的前端 Origin，多个值用英文逗号分隔 |
 
 配置示例见 `backend/.env.example`。
 
@@ -354,7 +357,7 @@ ws://localhost:8080/api/live/ws?sessionId=8f7aa62af869e2f1af3759f12a8c3b90
 
 WebSocket 服务端事件均为 UTF-8 JSON 文本消息。
 
-通用结构：
+实时网关控制事件结构：
 
 ```ts
 type LiveEvent = {
@@ -375,6 +378,16 @@ type LiveEvent = {
 | `sequence` | `number` | 已接收音频帧序号，仅部分事件返回 |
 | `code` | `string` | 错误代码，仅错误事件返回 |
 | `message` | `string` | 错误详情，仅错误事件返回 |
+
+Doubao AST 字幕事件会被归一化为前端字段命名：
+
+```ts
+type InterpretationEvent =
+  | { type: "segment.partial"; segmentId: string; text?: string; sourceText?: string; startMs?: number; endMs?: number }
+  | { type: "segment.final"; segmentId: string; text?: string; sourceText?: string; startMs?: number; endMs?: number }
+  | { type: "audio.delta"; segmentId?: string; audio: string; codec?: "pcm" | "ogg_opus" }
+  | { type: "session.error"; code?: string; message?: string; providerLogId?: string };
+```
 
 ### 5.3 `session.ready`
 
@@ -561,53 +574,51 @@ socket.addEventListener("message", (event) => {
 
 ## 7. 已知限制与联调注意事项
 
-- 当前实时网关只校验和缓存音频帧，尚未接入 Doubao AST。
-- 当前 WebSocket 不会返回中文字幕或源文字幕。
+- 实时网关已接入 Doubao AST，并会把识别/翻译结果转为 `segment.partial`、`segment.final`、`audio.delta` 或 `session.error` 事件。
+- 真实 Doubao 链路依赖有效的 `DOUBAO_API_KEY` 或旧版 App 凭据、`DOUBAO_AST_RESOURCE_ID` 和可用模型配置。
 - 当前内存缓存每个会话保留最近 256 帧；服务重启后缓存丢失。
 - 音频帧会被缓存，但当前连接关闭时没有主动删除对应缓存。
 - 当前创建会话接口没有校验 `mode` 和语言代码是否合法。
-- 当前没有 CORS 中间件。前端从不同源调用 HTTP 接口时，浏览器可能阻止请求。
-- WebSocket 使用 `websocket.Accept` 默认 Origin 校验策略；前端和后端不同源时，握手可能被拒绝，联调前需要明确开发环境代理或允许的 Origin。
+- 前端和后端不同源运行时，需要在 `HTTP_ALLOWED_ORIGINS` 中显式配置前端 Origin，例如 `http://localhost:3000`。
 - 当前没有认证和授权机制，接口不应直接暴露到公网。
 - 当前没有主动关闭会话接口；关闭 WebSocket 即结束会话。
 - 当前 `voice_enabled` 仅保存到会话记录，不会产生语音输出。
 - 当前上传目录配置已存在，但上传接口尚未实现。
 
-## 8. 后续字幕事件约定
+## 8. 字幕事件约定
 
-以下事件来自技术方案，当前代码尚未实现。新增实现时，应同步更新本文档和前端类型定义：
+当前 WebSocket 已返回以下字幕事件。新增事件或字段时，应同步更新本文档和前端类型定义：
 
 ```ts
-type PlannedInterpretationEvent =
+type InterpretationEvent =
   | {
       type: "segment.partial";
-      session_id: string;
-      segment_id: string;
-      source_text: string;
-      target_text: string;
-      start_ms: number;
+      segmentId: string;
+      text?: string;
+      sourceText?: string;
+      startMs?: number;
+      endMs?: number;
     }
   | {
       type: "segment.final";
-      session_id: string;
-      segment_id: string;
-      source_text: string;
-      target_text: string;
-      start_ms: number;
-      end_ms: number;
+      segmentId: string;
+      text?: string;
+      sourceText?: string;
+      startMs?: number;
+      endMs?: number;
     }
   | {
       type: "segment.revision";
-      session_id: string;
-      segment_id: string;
-      previous_target_text: string;
-      target_text: string;
-      reason: string;
+      segmentId: string;
+      before?: string;
+      after?: string;
+      reason?: string;
     }
   | {
       type: "session.error";
-      code: string;
-      message: string;
+      code?: string;
+      message?: string;
+      providerLogId?: string;
     };
 ```
 

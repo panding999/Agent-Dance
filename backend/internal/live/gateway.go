@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,21 +48,38 @@ type Event struct {
 
 type SessionRunnerFactory func(store.Session) (*SessionRunner, error)
 
+type GatewayOptions struct {
+	RunnerFactory  SessionRunnerFactory
+	OriginPatterns []string
+}
+
 type Gateway struct {
-	store         *store.SQLiteStore
-	cache         *audio.SessionChunkCache
-	runnerFactory SessionRunnerFactory
+	store          *store.SQLiteStore
+	cache          *audio.SessionChunkCache
+	runnerFactory  SessionRunnerFactory
+	originPatterns []string
 }
 
 func NewGateway(st *store.SQLiteStore, cache *audio.SessionChunkCache) *Gateway {
-	return NewGatewayWithRunner(st, cache, nil)
+	return NewGatewayWithOptions(st, cache, GatewayOptions{})
 }
 
 func NewGatewayWithRunner(st *store.SQLiteStore, cache *audio.SessionChunkCache, runnerFactory SessionRunnerFactory) *Gateway {
+	return NewGatewayWithOptions(st, cache, GatewayOptions{
+		RunnerFactory: runnerFactory,
+	})
+}
+
+func NewGatewayWithOptions(st *store.SQLiteStore, cache *audio.SessionChunkCache, options GatewayOptions) *Gateway {
 	if cache == nil {
 		cache = audio.NewSessionChunkCache(256)
 	}
-	return &Gateway{store: st, cache: cache, runnerFactory: runnerFactory}
+	return &Gateway{
+		store:          st,
+		cache:          cache,
+		runnerFactory:  options.RunnerFactory,
+		originPatterns: compactStrings(options.OriginPatterns),
+	}
 }
 
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +120,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := websocket.Accept(w, r, nil)
+	conn, err := websocket.Accept(w, r, g.acceptOptions())
 	if err != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
 		defer cancel()
@@ -189,6 +207,13 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (g *Gateway) acceptOptions() *websocket.AcceptOptions {
+	if len(g.originPatterns) == 0 {
+		return nil
+	}
+	return &websocket.AcceptOptions{OriginPatterns: g.originPatterns}
+}
+
 func (g *Gateway) writeErrorAndClose(ctx context.Context, writer *webSocketEventWriter, conn *websocket.Conn, code string, message string) error {
 	if err := writer.WriteJSON(ctx, Event{
 		Type:    EventSessionError,
@@ -248,6 +273,17 @@ func (w *webSocketEventWriter) WriteJSON(ctx context.Context, event any) error {
 
 func writeEvent(ctx context.Context, conn *websocket.Conn, event Event) error {
 	return newWebSocketEventWriter(conn).WriteJSON(ctx, event)
+}
+
+func compactStrings(values []string) []string {
+	compacted := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			compacted = append(compacted, value)
+		}
+	}
+	return compacted
 }
 
 func runPingLoop(ctx context.Context, conn pinger, interval time.Duration, timeout time.Duration) {

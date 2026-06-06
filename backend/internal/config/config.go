@@ -26,6 +26,7 @@ type Config struct {
 	DatabaseURL         string
 	UploadDir           string
 	HTTPAddr            string
+	HTTPAllowedOrigins  []string
 }
 
 func LoadFromEnv() (Config, error) {
@@ -63,9 +64,22 @@ func LoadFromEnv() (Config, error) {
 		DatabaseURL:         strings.TrimSpace(os.Getenv("DATABASE_URL")),
 		UploadDir:           strings.TrimSpace(os.Getenv("UPLOAD_DIR")),
 		HTTPAddr:            httpAddr,
+		HTTPAllowedOrigins:  splitList(os.Getenv("HTTP_ALLOWED_ORIGINS")),
 	}, nil
 }
 
 func hasDoubaoAuth(apiKey string, appID string, appKey string, accessKey string) bool {
 	return apiKey != "" || appKey != "" || (appID != "" && accessKey != "")
+}
+
+func splitList(value string) []string {
+	parts := strings.Split(value, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			values = append(values, part)
+		}
+	}
+	return values
 }

@@ -37,6 +37,7 @@ func run() error {
 
 	api := httpapi.NewServerWithOptions(st, httpapi.ServerOptions{
 		LiveRunnerFactory: newLiveRunnerFactory(cfg),
+		AllowedOrigins:    cfg.HTTPAllowedOrigins,
 	})
 	server := &http.Server{
 		Addr:    cfg.HTTPAddr,

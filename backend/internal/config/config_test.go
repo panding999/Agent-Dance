@@ -72,6 +72,33 @@ func TestLoadFromEnvReadsBackendConfigWithAPIKey(t *testing.T) {
 	}
 }
 
+func TestLoadFromEnvReadsHTTPAllowedOrigins(t *testing.T) {
+	t.Setenv("DOUBAO_API_KEY", "api-key")
+	t.Setenv("DOUBAO_APP_ID", "")
+	t.Setenv("DOUBAO_APP_KEY", "")
+	t.Setenv("DOUBAO_ACCESS_KEY", "")
+	t.Setenv("DOUBAO_AST_RESOURCE_ID", "ast-resource")
+	t.Setenv("DOUBAO_AUC_RESOURCE_ID", "auc-resource")
+	t.Setenv("DATABASE_URL", "runtime/agent-dance.db")
+	t.Setenv("UPLOAD_DIR", "uploads")
+	t.Setenv("HTTP_ALLOWED_ORIGINS", " http://localhost:3000, http://127.0.0.1:3000 ,,")
+
+	got, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("LoadFromEnv() error = %v", err)
+	}
+
+	want := []string{"http://localhost:3000", "http://127.0.0.1:3000"}
+	if len(got.HTTPAllowedOrigins) != len(want) {
+		t.Fatalf("HTTPAllowedOrigins = %#v, want %#v", got.HTTPAllowedOrigins, want)
+	}
+	for i := range want {
+		if got.HTTPAllowedOrigins[i] != want[i] {
+			t.Fatalf("HTTPAllowedOrigins = %#v, want %#v", got.HTTPAllowedOrigins, want)
+		}
+	}
+}
+
 func TestLoadFromEnvReadsLegacyAppCredentials(t *testing.T) {
 	t.Setenv("DOUBAO_API_KEY", "")
 	t.Setenv("DOUBAO_APP_ID", "app-id")

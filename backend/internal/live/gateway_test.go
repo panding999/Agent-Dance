@@ -200,6 +200,54 @@ func TestGatewayRejectsDuplicateLiveConnection(t *testing.T) {
 	}
 }
 
+func TestGatewayAllowsConfiguredCrossOriginWebSocket(t *testing.T) {
+	st, session := newLiveTestStore(t)
+	server := httptest.NewServer(NewGatewayWithOptions(st, audio.NewSessionChunkCache(4), GatewayOptions{
+		OriginPatterns: []string{"localhost:3000"},
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/live/ws?sessionId=" + session.ID
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Origin": []string{"http://localhost:3000"}},
+	})
+	if err != nil {
+		t.Fatalf("dial configured origin websocket: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "test done")
+
+	ready := readEvent(t, conn)
+	if ready.Type != EventSessionReady {
+		t.Fatalf("ready event type = %q", ready.Type)
+	}
+}
+
+func TestGatewayRejectsUnconfiguredCrossOriginWebSocket(t *testing.T) {
+	st, session := newLiveTestStore(t)
+	server := httptest.NewServer(NewGateway(st, audio.NewSessionChunkCache(4)))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/live/ws?sessionId=" + session.ID
+	_, resp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Origin": []string{"http://localhost:3000"}},
+	})
+	if err == nil {
+		t.Fatal("dial unconfigured origin succeeded, want failure")
+	}
+	if resp == nil || resp.StatusCode != http.StatusForbidden {
+		if resp == nil {
+			t.Fatal("dial unconfigured origin response is nil, want 403")
+		}
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
 func TestGatewayWithRunnerForwardsAudioToASTAndSubtitleToBrowser(t *testing.T) {
 	ctx := context.Background()
 	st, session := newLiveTestStore(t)

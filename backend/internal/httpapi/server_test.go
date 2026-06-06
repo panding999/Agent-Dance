@@ -89,6 +89,61 @@ func TestCreateAndGetSession(t *testing.T) {
 	}
 }
 
+func TestConfiguredCORSOriginCanCreateSession(t *testing.T) {
+	handler := newTestHandlerWithOptions(t, ServerOptions{
+		AllowedOrigins: []string{"http://localhost:3000"},
+	})
+
+	preflight := httptest.NewRecorder()
+	preflightRequest := httptest.NewRequest(http.MethodOptions, "/api/sessions", nil)
+	preflightRequest.Header.Set("Origin", "http://localhost:3000")
+	preflightRequest.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	preflightRequest.Header.Set("Access-Control-Request-Headers", "Content-Type")
+	handler.ServeHTTP(preflight, preflightRequest)
+
+	if preflight.Code != http.StatusNoContent {
+		t.Fatalf("preflight status = %d body = %s", preflight.Code, preflight.Body.String())
+	}
+	if preflight.Header().Get("Access-Control-Allow-Origin") != "http://localhost:3000" {
+		t.Fatalf("Access-Control-Allow-Origin = %q", preflight.Header().Get("Access-Control-Allow-Origin"))
+	}
+	if preflight.Header().Get("Access-Control-Allow-Methods") != "GET, POST, OPTIONS" {
+		t.Fatalf("Access-Control-Allow-Methods = %q", preflight.Header().Get("Access-Control-Allow-Methods"))
+	}
+
+	create := httptest.NewRecorder()
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader([]byte(`{"mode":"live"}`)))
+	createRequest.Header.Set("Origin", "http://localhost:3000")
+	createRequest.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(create, createRequest)
+
+	if create.Code != http.StatusCreated {
+		t.Fatalf("POST /api/sessions status = %d body = %s", create.Code, create.Body.String())
+	}
+	if create.Header().Get("Access-Control-Allow-Origin") != "http://localhost:3000" {
+		t.Fatalf("Access-Control-Allow-Origin = %q", create.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestUnconfiguredCORSOriginIsNotAllowed(t *testing.T) {
+	handler := newTestHandlerWithOptions(t, ServerOptions{
+		AllowedOrigins: []string{"http://localhost:3000"},
+	})
+
+	preflight := httptest.NewRecorder()
+	preflightRequest := httptest.NewRequest(http.MethodOptions, "/api/sessions", nil)
+	preflightRequest.Header.Set("Origin", "http://example.com")
+	preflightRequest.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	handler.ServeHTTP(preflight, preflightRequest)
+
+	if preflight.Code != http.StatusForbidden {
+		t.Fatalf("preflight status = %d body = %s", preflight.Code, preflight.Body.String())
+	}
+	if preflight.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("Access-Control-Allow-Origin = %q", preflight.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
 func TestGetMissingSessionReturnsNotFound(t *testing.T) {
 	handler := newTestHandler(t)
 
@@ -155,6 +210,11 @@ func TestServerOptionsWireLiveRunnerFactory(t *testing.T) {
 
 func newTestHandler(t *testing.T) http.Handler {
 	t.Helper()
+	return newTestHandlerWithOptions(t, ServerOptions{})
+}
+
+func newTestHandlerWithOptions(t *testing.T, options ServerOptions) http.Handler {
+	t.Helper()
 
 	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "agent-dance.db"))
 	if err != nil {
@@ -166,7 +226,7 @@ func newTestHandler(t *testing.T) http.Handler {
 		}
 	})
 
-	return NewServer(st).Handler()
+	return NewServerWithOptions(st, options).Handler()
 }
 
 func readLiveError(t *testing.T, conn *websocket.Conn) live.Event {

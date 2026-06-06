@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowRight,
@@ -10,12 +10,20 @@ import {
   FileVideo,
   FileAudio,
   Microphone,
-  Play
+  Play,
+  Stop
 } from "@phosphor-icons/react";
+import {
+  LiveAudioStreamer,
+  connectLiveWebSocket,
+  createLiveSession,
+  parseLiveServerEvent,
+  type LiveServerEvent
+} from "@/lib/live-client";
 
 type WorkbenchMode = "live" | "upload";
 type UploadKind = "audio" | "video";
-type SessionState = "idle" | "listening" | "draft" | "correcting" | "ready";
+type SessionState = "idle" | "listening" | "draft" | "correcting" | "ready" | "error";
 type SegmentState = "draft" | "confirmed" | "corrected";
 
 type TranscriptSegment = {
@@ -72,17 +80,87 @@ function stateClass(state: SegmentState) {
   return "border-emerald-200 bg-emerald-50 text-emerald-800";
 }
 
+function upsertSegment(current: TranscriptSegment[], event: LiveServerEvent) {
+  const id = event.segmentId ?? `segment-${current.length + 1}`;
+  const existingIndex = current.findIndex((segment) => segment.id === id);
+  const existing = existingIndex >= 0 ? current[existingIndex] : undefined;
+  const state: SegmentState =
+    event.type === "segment.revision" ? "corrected" : event.type === "segment.final" ? "confirmed" : "draft";
+  const nextText = event.after ?? event.text ?? existing?.zh ?? "正在翻译...";
+  const hasTime = event.startMs !== undefined || event.endMs !== undefined;
+  const next: TranscriptSegment = {
+    id,
+    time: hasTime ? formatTimestamp(event.startMs ?? event.endMs) : existing?.time ?? "00:00",
+    source: event.sourceText ?? existing?.source ?? "等待源文字幕...",
+    zh: nextText,
+    state,
+    correction:
+      event.type === "segment.revision"
+        ? {
+            first: event.before ?? existing?.zh ?? "",
+            final: nextText,
+            trigger: event.reason ?? "后台复核更新"
+          }
+        : existing?.correction
+  };
+
+  if (existingIndex < 0) {
+    return [...current, next];
+  }
+
+  const updated = current.slice();
+  updated[existingIndex] = next;
+  return updated;
+}
+
+function formatTimestamp(milliseconds?: number) {
+  if (milliseconds === undefined || milliseconds < 0) {
+    return "00:00";
+  }
+
+  const totalSeconds = Math.floor(milliseconds / 1000);
+  const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, "0");
+  const seconds = (totalSeconds % 60).toString().padStart(2, "0");
+  return `${minutes}:${seconds}`;
+}
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "实时同传启动失败";
+}
+
 export function LandingPage() {
   const [mode, setMode] = useState<WorkbenchMode>("live");
   const [uploadKind, setUploadKind] = useState<UploadKind>("video");
   const [sessionState, setSessionState] = useState<SessionState>("idle");
   const [visibleCount, setVisibleCount] = useState(2);
+  const [liveSegments, setLiveSegments] = useState<TranscriptSegment[]>([]);
+  const [liveSessionId, setLiveSessionId] = useState<string | null>(null);
+  const [acceptedFrames, setAcceptedFrames] = useState(0);
+  const [liveError, setLiveError] = useState<string | null>(null);
+  const socketRef = useRef<WebSocket | null>(null);
+  const streamerRef = useRef<LiveAudioStreamer | null>(null);
 
-  const activeSegments = useMemo(() => segments.slice(0, visibleCount), [visibleCount]);
-  const active = sessionState !== "idle" && sessionState !== "ready";
+  const activeSegments = useMemo(
+    () => (mode === "live" ? liveSegments : segments.slice(0, visibleCount)),
+    [liveSegments, mode, visibleCount]
+  );
+  const uploadActive = mode === "upload" && sessionState !== "idle" && sessionState !== "ready";
+
+  const cleanupLiveConnection = useCallback(() => {
+    streamerRef.current?.stop().catch(() => undefined);
+    streamerRef.current = null;
+
+    if (socketRef.current && socketRef.current.readyState <= WebSocket.OPEN) {
+      socketRef.current.close(1000, "client stopped");
+    }
+    socketRef.current = null;
+  }, []);
 
   useEffect(() => {
-    if (!active) return;
+    if (!uploadActive) return;
 
     const timeline: SessionState[] = ["listening", "draft", "correcting", "ready"];
     let step = 0;
@@ -96,13 +174,128 @@ export function LandingPage() {
     }, 1200);
 
     return () => window.clearInterval(timer);
-  }, [active]);
+  }, [uploadActive]);
 
-  function startSession(nextMode = mode) {
-    setMode(nextMode);
-    setVisibleCount(1);
+  useEffect(() => {
+    return () => cleanupLiveConnection();
+  }, [cleanupLiveConnection]);
+
+  const handleLiveEvent = useCallback(
+    async (event: LiveServerEvent, socket: WebSocket) => {
+      if (event.type === "session.ready") {
+        setSessionState("listening");
+        const streamer = new LiveAudioStreamer((frame) => {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(frame);
+          }
+        });
+        streamerRef.current = streamer;
+        await streamer.start();
+        return;
+      }
+
+      if (event.type === "audio.frame.accepted") {
+        setAcceptedFrames(event.sequence ?? 0);
+        return;
+      }
+
+      if (event.type === "segment.partial" || event.type === "segment.final") {
+        setSessionState("draft");
+        setLiveSegments((current) => upsertSegment(current, event));
+        return;
+      }
+
+      if (event.type === "segment.revision") {
+        setSessionState("correcting");
+        setLiveSegments((current) => upsertSegment(current, event));
+        return;
+      }
+
+      if (event.type === "session.error") {
+        setLiveError(event.message ?? event.code ?? "实时同传连接出错");
+        setSessionState("error");
+        cleanupLiveConnection();
+      }
+    },
+    [cleanupLiveConnection]
+  );
+
+  const startLiveSession = useCallback(async () => {
+    cleanupLiveConnection();
+    setMode("live");
     setSessionState("listening");
-  }
+    setLiveSegments([]);
+    setLiveSessionId(null);
+    setAcceptedFrames(0);
+    setLiveError(null);
+
+    try {
+      const session = await createLiveSession({
+        mode: "live",
+        source_language: "en",
+        target_language: "zh",
+        voice_enabled: false
+      });
+      setLiveSessionId(session.id);
+
+      const socket = connectLiveWebSocket(session.id);
+      socketRef.current = socket;
+
+      socket.addEventListener("message", (message) => {
+        try {
+          const event = parseLiveServerEvent(message.data);
+          if (event) {
+            void handleLiveEvent(event, socket).catch((error: unknown) => {
+              setLiveError(errorMessage(error));
+              setSessionState("error");
+              cleanupLiveConnection();
+            });
+          }
+        } catch (error) {
+          setLiveError(errorMessage(error));
+          setSessionState("error");
+          cleanupLiveConnection();
+        }
+      });
+
+      socket.addEventListener("error", () => {
+        setLiveError("实时同传 WebSocket 连接失败");
+        setSessionState("error");
+        cleanupLiveConnection();
+      });
+
+      socket.addEventListener("close", () => {
+        streamerRef.current?.stop().catch(() => undefined);
+        streamerRef.current = null;
+        setSessionState((state) => (state === "error" || state === "idle" ? state : "ready"));
+      });
+    } catch (error) {
+      setLiveError(errorMessage(error));
+      setSessionState("error");
+      cleanupLiveConnection();
+    }
+  }, [cleanupLiveConnection, handleLiveEvent]);
+
+  const stopLiveSession = useCallback(() => {
+    cleanupLiveConnection();
+    setSessionState("ready");
+  }, [cleanupLiveConnection]);
+
+  const startSession = useCallback(
+    (nextMode = mode) => {
+      if (nextMode === "live") {
+        void startLiveSession();
+        return;
+      }
+
+      cleanupLiveConnection();
+      setMode(nextMode);
+      setVisibleCount(1);
+      setSessionState("listening");
+      setLiveError(null);
+    },
+    [cleanupLiveConnection, mode, startLiveSession]
+  );
 
   return (
     <main className="h-full overflow-hidden">
@@ -112,9 +305,13 @@ export function LandingPage() {
           uploadKind={uploadKind}
           sessionState={sessionState}
           segments={activeSegments}
+          liveSessionId={liveSessionId}
+          acceptedFrames={acceptedFrames}
+          liveError={liveError}
           onModeChange={(nextMode) => setMode(nextMode)}
           onUploadKindChange={setUploadKind}
           onStart={startSession}
+          onStop={stopLiveSession}
         />
       </section>
     </main>
@@ -126,20 +323,30 @@ function InterpreterWorkspace({
   uploadKind,
   sessionState,
   segments,
+  liveSessionId,
+  acceptedFrames,
+  liveError,
   onModeChange,
   onUploadKindChange,
-  onStart
+  onStart,
+  onStop
 }: {
   mode: WorkbenchMode;
   uploadKind: UploadKind;
   sessionState: SessionState;
   segments: TranscriptSegment[];
+  liveSessionId: string | null;
+  acceptedFrames: number;
+  liveError: string | null;
   onModeChange: (mode: WorkbenchMode) => void;
   onUploadKindChange: (kind: UploadKind) => void;
   onStart: (mode: WorkbenchMode) => void;
+  onStop: () => void;
 }) {
   const correctedSegment = segments.find((segment) => segment.correction);
   const showingVideo = mode === "upload" && uploadKind === "video";
+  const liveRunning =
+    mode === "live" && (sessionState === "listening" || sessionState === "draft" || sessionState === "correcting");
 
   return (
     <section
@@ -160,11 +367,11 @@ function InterpreterWorkspace({
           <div className="flex flex-wrap items-center gap-3">
             <SessionStatus state={sessionState} />
             <button
-              onClick={() => onStart(mode)}
+              onClick={() => (liveRunning ? onStop() : onStart(mode))}
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 active:translate-y-px"
             >
-              <Play size={16} weight="fill" />
-              查看实时效果
+              {liveRunning ? <Stop size={16} weight="fill" /> : <Play size={16} weight="fill" />}
+              {liveRunning ? "停止同传" : mode === "live" ? "开始同传" : "查看回放"}
             </button>
           </div>
         </div>
@@ -204,6 +411,9 @@ function InterpreterWorkspace({
             mode={mode}
             uploadKind={uploadKind}
             sessionState={sessionState}
+            liveSessionId={liveSessionId}
+            acceptedFrames={acceptedFrames}
+            liveError={liveError}
             onUploadKindChange={onUploadKindChange}
             onStart={onStart}
           />
@@ -258,12 +468,17 @@ function SessionStatus({ state }: { state: SessionState }) {
     listening: "正在听",
     draft: "生成字幕",
     correcting: "正在纠错",
-    ready: "已同步"
+    ready: "已同步",
+    error: "连接异常"
   };
 
   return (
-    <span className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-800">
-      <span className="size-2 rounded-full bg-blue-500" />
+    <span
+      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium ${
+        state === "error" ? "border-rose-200 bg-rose-50 text-rose-800" : "border-blue-200 bg-blue-50 text-blue-800"
+      }`}
+    >
+      <span className={`size-2 rounded-full ${state === "error" ? "bg-rose-500" : "bg-blue-500"}`} />
       {labels[state]}
     </span>
   );
@@ -273,12 +488,18 @@ function ControlColumn({
   mode,
   sessionState,
   uploadKind,
+  liveSessionId,
+  acceptedFrames,
+  liveError,
   onUploadKindChange,
   onStart
 }: {
   mode: WorkbenchMode;
   sessionState: SessionState;
   uploadKind: UploadKind;
+  liveSessionId: string | null;
+  acceptedFrames: number;
+  liveError: string | null;
   onUploadKindChange: (kind: UploadKind) => void;
   onStart: (mode: WorkbenchMode) => void;
 }) {
@@ -299,10 +520,21 @@ function ControlColumn({
       </div>
       {isLive ? (
         <div className="mt-4">
-          <WaveBars active={sessionState !== "idle"} />
+          <WaveBars active={sessionState === "listening" || sessionState === "draft" || sessionState === "correcting"} />
           <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-500">
             <span>16kHz PCM</span>
             <span className="text-right">80ms/frame</span>
+          </div>
+          <div className="mt-3 rounded-xl border border-slate-200 bg-white/70 p-3 text-xs text-slate-600">
+            <div className="flex items-center justify-between gap-3">
+              <span>会话</span>
+              <span className="mono max-w-[10rem] truncate text-slate-900">{liveSessionId ?? "未创建"}</span>
+            </div>
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <span>后端接收</span>
+              <span className="mono text-slate-900">{acceptedFrames} 帧</span>
+            </div>
+            {liveError ? <div className="mt-2 rounded-lg bg-rose-50 p-2 text-rose-700">{liveError}</div> : null}
           </div>
         </div>
       ) : (
@@ -387,11 +619,17 @@ function TranscriptStream({ segments }: { segments: TranscriptSegment[] }) {
       </div>
       <div className="stable-scrollbar min-h-0 flex-1 overflow-y-auto pr-1">
         <div className="space-y-3">
-          <AnimatePresence initial={false}>
-            {segments.map((segment) => (
-              <TranscriptCard key={segment.id} segment={segment} />
-            ))}
-          </AnimatePresence>
+          {segments.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-white/60 p-6 text-sm text-slate-500">
+              等待后端字幕事件...
+            </div>
+          ) : (
+            <AnimatePresence initial={false}>
+              {segments.map((segment) => (
+                <TranscriptCard key={segment.id} segment={segment} />
+              ))}
+            </AnimatePresence>
+          )}
         </div>
       </div>
     </div>
