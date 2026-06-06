@@ -155,13 +155,13 @@ Expected result: packetizer splits exactly 2560 bytes per 80ms packet at 16kHz I
 
 Goal: backend can create a Doubao AST session and send audio packets.
 
-- [ ] Add `internal/doubao/ast/client.go`.
-- [ ] Load AST endpoint `wss://openspeech.bytedance.com/api/v4/ast/v2/translate`.
-- [ ] Attach required headers:
+- [x] Add `internal/doubao/ast/client.go`.
+- [x] Load AST endpoint `wss://openspeech.bytedance.com/api/v4/ast/v2/translate`.
+- [x] Attach required headers:
   - `X-Api-App-Key`
   - `X-Api-Resource-Id: volc.service_type.10053`
-- [ ] Add protobuf request and response wrappers.
-- [ ] Implement StartSession with:
+- [x] Add protobuf request and response wrappers.
+- [x] Implement StartSession with:
   - `mode=s2t` or `mode=s2s`
   - `source_language`
   - `target_language`
@@ -171,9 +171,9 @@ Goal: backend can create a Doubao AST session and send audio packets.
   - `source_audio.bits=16`
   - `source_audio.channel=1`
   - `corpus` terms
-- [ ] Implement SendAudio packet call.
-- [ ] Implement FinishSession.
-- [ ] Capture provider logid and errors.
+- [x] Implement SendAudio packet call.
+- [x] Implement FinishSession.
+- [x] Capture provider logid and errors.
 
 Verification:
 
@@ -381,7 +381,7 @@ The first sprint should stop at a backend that starts and accepts fake live audi
 - [ ] Add browser WebSocket endpoint.
 - [ ] Add audio frame validation.
 - [ ] Add packetizer unit tests.
-- [ ] Add fake AST server test scaffold.
+- [x] Add fake AST server test scaffold.
 
 Exit criteria:
 
