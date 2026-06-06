@@ -208,13 +208,13 @@ Expected result: fixture provider events produce stable internal events with con
 
 Goal: the UI receives readable subtitle state instead of raw provider noise.
 
-- [ ] Implement current segment tracking.
-- [ ] Merge source and translation events by provider segment id or time window.
-- [ ] Update current line for partial text.
-- [ ] Persist final segments.
-- [ ] Ignore trivial partial churn.
-- [ ] Emit `segment.final` once per segment.
-- [ ] Add max line length and max duration guards.
+- [x] Implement current segment tracking.
+- [x] Merge source and translation events by provider segment id or time window.
+- [x] Update current line for partial text.
+- [x] Persist final segments.
+- [x] Ignore trivial partial churn.
+- [x] Emit `segment.final` once per segment.
+- [x] Add max line length and max duration guards.
 
 Verification:
 
