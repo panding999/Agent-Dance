@@ -208,6 +208,9 @@ func TestClientSendAudioAndFinishSessionWriteTaskAndFinishRequests(t *testing.T)
 	if gotTask.Event != EventTaskRequest {
 		t.Fatalf("task event = %d, want %d", gotTask.Event, EventTaskRequest)
 	}
+	if gotTask.SessionID != "session-2" {
+		t.Fatalf("task session_id = %q, want session-2", gotTask.SessionID)
+	}
 	if gotTask.Packet.Sequence != 7 || gotTask.Packet.TimestampMS != 560 {
 		t.Fatalf("task packet = %+v", gotTask.Packet)
 	}

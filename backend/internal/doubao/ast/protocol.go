@@ -117,8 +117,9 @@ type AudioConfig struct {
 }
 
 type TaskRequest struct {
-	Event  EventType
-	Packet audio.Packet
+	Event     EventType
+	SessionID string
+	Packet    audio.Packet
 }
 
 type FinishSessionRequest struct {
@@ -177,11 +178,12 @@ func newStartSessionRequest(params StartSessionParams) (StartSessionRequest, err
 	}, nil
 }
 
-func newTaskRequest(packet audio.Packet) TaskRequest {
+func newTaskRequest(sessionID string, packet audio.Packet) TaskRequest {
 	packet.PCM = cloneBytes(packet.PCM)
 	return TaskRequest{
-		Event:  EventTaskRequest,
-		Packet: packet,
+		Event:     EventTaskRequest,
+		SessionID: strings.TrimSpace(sessionID),
+		Packet:    packet,
 	}
 }
 

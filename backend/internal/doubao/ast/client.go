@@ -180,7 +180,7 @@ func (c *Client) StartSession(ctx context.Context, params StartSessionParams) er
 }
 
 func (c *Client) SendAudio(ctx context.Context, packet audio.Packet) error {
-	conn, ready, err := c.connectionWithReady()
+	conn, ready, sessionID, err := c.connectionWithReady()
 	if err != nil {
 		return err
 	}
@@ -190,7 +190,7 @@ func (c *Client) SendAudio(ctx context.Context, packet audio.Packet) error {
 		return ctx.Err()
 	}
 
-	req := newTaskRequest(packet)
+	req := newTaskRequest(sessionID, packet)
 	payload, err := c.codec.EncodeTaskRequest(req)
 	if err != nil {
 		return fmt.Errorf("encode ast task request: %w", err)
@@ -257,13 +257,13 @@ func (c *Client) connection() (*websocket.Conn, error) {
 	return conn, err
 }
 
-func (c *Client) connectionWithReady() (*websocket.Conn, <-chan struct{}, error) {
+func (c *Client) connectionWithReady() (*websocket.Conn, <-chan struct{}, string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.conn == nil || c.ready == nil {
-		return nil, nil, ErrSessionNotStarted
+		return nil, nil, "", ErrSessionNotStarted
 	}
-	return c.conn, c.ready, nil
+	return c.conn, c.ready, c.sessionID, nil
 }
 
 func (c *Client) connectionWithSession() (*websocket.Conn, string, error) {

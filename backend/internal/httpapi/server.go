@@ -17,10 +17,23 @@ type Server struct {
 	mux         *http.ServeMux
 }
 
+type ServerOptions struct {
+	LiveRunnerFactory live.SessionRunnerFactory
+	LiveChunkCache    *audio.SessionChunkCache
+}
+
 func NewServer(st *store.SQLiteStore) *Server {
+	return NewServerWithOptions(st, ServerOptions{})
+}
+
+func NewServerWithOptions(st *store.SQLiteStore, options ServerOptions) *Server {
+	cache := options.LiveChunkCache
+	if cache == nil {
+		cache = audio.NewSessionChunkCache(256)
+	}
 	s := &Server{
 		store:       st,
-		liveGateway: live.NewGateway(st, audio.NewSessionChunkCache(256)),
+		liveGateway: live.NewGatewayWithRunner(st, cache, options.LiveRunnerFactory),
 		mux:         http.NewServeMux(),
 	}
 	s.routes()
