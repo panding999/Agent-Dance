@@ -228,13 +228,13 @@ Expected result: partial updates do not create history rows; final events persis
 
 Goal: one browser session can flow through browser WebSocket -> packetizer -> Doubao AST -> normalized events -> frontend.
 
-- [ ] Implement `live.SessionRunner`.
-- [ ] Connect browser WebSocket and AST client lifecycle.
-- [ ] Forward packetized audio to AST.
-- [ ] Forward normalized subtitle events to browser.
-- [ ] Forward `audio.delta` when `mode=s2s`.
-- [ ] On browser close, finish AST session.
-- [ ] On AST failure, close browser session with reason.
+- [x] Implement `live.SessionRunner`.
+- [x] Connect browser WebSocket and AST client lifecycle.
+- [x] Forward packetized audio to AST.
+- [x] Forward normalized subtitle events to browser.
+- [x] Forward `audio.delta` when `mode=s2s`.
+- [x] On browser close, finish AST session.
+- [x] On AST failure, close browser session with reason.
 
 Verification:
 

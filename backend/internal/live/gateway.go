@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/panding999/agent-dance/backend/internal/audio"
 	"github.com/panding999/agent-dance/backend/internal/store"
+	"github.com/panding999/agent-dance/backend/internal/subtitle"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
 )
@@ -20,6 +22,7 @@ const (
 	ErrorInvalidAudioFrame = "invalid_audio_frame"
 	ErrorOutOfOrderFrame   = "out_of_order_frame"
 	ErrorPingTimeout       = "ping_timeout"
+	ErrorASTSession        = "ast_session_error"
 )
 
 const (
@@ -42,16 +45,23 @@ type Event struct {
 	Message   string `json:"message,omitempty"`
 }
 
+type SessionRunnerFactory func(store.Session) (*SessionRunner, error)
+
 type Gateway struct {
-	store *store.SQLiteStore
-	cache *audio.SessionChunkCache
+	store         *store.SQLiteStore
+	cache         *audio.SessionChunkCache
+	runnerFactory SessionRunnerFactory
 }
 
 func NewGateway(st *store.SQLiteStore, cache *audio.SessionChunkCache) *Gateway {
+	return NewGatewayWithRunner(st, cache, nil)
+}
+
+func NewGatewayWithRunner(st *store.SQLiteStore, cache *audio.SessionChunkCache, runnerFactory SessionRunnerFactory) *Gateway {
 	if cache == nil {
 		cache = audio.NewSessionChunkCache(256)
 	}
-	return &Gateway{store: st, cache: cache}
+	return &Gateway{store: st, cache: cache, runnerFactory: runnerFactory}
 }
 
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -101,16 +111,35 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.SetReadLimit(audio.BrowserFrameHeaderSize + audio.MaxBrowserFramePCMBytes)
 	defer conn.Close(websocket.StatusNormalClosure, "session closed")
+	writer := newWebSocketEventWriter(conn)
 	pingCtx, stopPing := context.WithCancel(r.Context())
 	defer stopPing()
 	go runPingLoop(pingCtx, conn, pingInterval, pingTimeout)
+
+	var runner *SessionRunner
+	if g.runnerFactory != nil {
+		runner, err = g.runnerFactory(session)
+		if err != nil {
+			_ = g.writeErrorAndClose(r.Context(), writer, conn, ErrorASTSession, "create live session runner failed")
+			return
+		}
+		if err := runner.Start(r.Context(), session); err != nil {
+			_ = g.writeErrorAndClose(r.Context(), writer, conn, ErrorASTSession, err.Error())
+			return
+		}
+		go g.forwardRunnerEvents(r.Context(), writer, conn, runner)
+	}
+
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
 		defer cancel()
+		if runner != nil {
+			_ = runner.Finish(ctx)
+		}
 		_ = g.store.CloseSession(ctx, session.ID)
 	}()
 
-	if err := writeEvent(r.Context(), conn, Event{
+	if err := writer.WriteJSON(r.Context(), Event{
 		Type:      EventSessionReady,
 		SessionID: session.ID,
 	}); err != nil {
@@ -126,17 +155,17 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if messageType != websocket.MessageBinary {
-			_ = g.writeErrorAndClose(r.Context(), conn, ErrorInvalidAudioFrame, "expected binary audio frame")
+			_ = g.writeErrorAndClose(r.Context(), writer, conn, ErrorInvalidAudioFrame, "expected binary audio frame")
 			return
 		}
 
 		frame, err := audio.ParseBrowserFrame(payload)
 		if err != nil {
-			_ = g.writeErrorAndClose(r.Context(), conn, ErrorInvalidAudioFrame, err.Error())
+			_ = g.writeErrorAndClose(r.Context(), writer, conn, ErrorInvalidAudioFrame, err.Error())
 			return
 		}
 		if hasSequence && frame.Sequence <= lastSequence {
-			_ = g.writeErrorAndClose(r.Context(), conn, ErrorOutOfOrderFrame, "audio frame sequence must increase")
+			_ = g.writeErrorAndClose(r.Context(), writer, conn, ErrorOutOfOrderFrame, "audio frame sequence must increase")
 			return
 		}
 
@@ -144,7 +173,14 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		lastSequence = frame.Sequence
 		g.cache.Add(session.ID, frame)
 
-		if err := writeEvent(r.Context(), conn, Event{
+		if runner != nil {
+			if err := runner.PushAudioFrame(r.Context(), frame); err != nil {
+				_ = g.writeErrorAndClose(r.Context(), writer, conn, ErrorASTSession, err.Error())
+				return
+			}
+		}
+
+		if err := writer.WriteJSON(r.Context(), Event{
 			Type:     EventAudioFrameAccepted,
 			Sequence: frame.Sequence,
 		}); err != nil {
@@ -153,8 +189,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (g *Gateway) writeErrorAndClose(ctx context.Context, conn *websocket.Conn, code string, message string) error {
-	if err := writeEvent(ctx, conn, Event{
+func (g *Gateway) writeErrorAndClose(ctx context.Context, writer *webSocketEventWriter, conn *websocket.Conn, code string, message string) error {
+	if err := writer.WriteJSON(ctx, Event{
 		Type:    EventSessionError,
 		Code:    code,
 		Message: message,
@@ -164,10 +200,54 @@ func (g *Gateway) writeErrorAndClose(ctx context.Context, conn *websocket.Conn, 
 	return conn.Close(websocket.StatusPolicyViolation, code)
 }
 
-func writeEvent(ctx context.Context, conn *websocket.Conn, event Event) error {
+func (g *Gateway) forwardRunnerEvents(ctx context.Context, writer *webSocketEventWriter, conn *websocket.Conn, runner *SessionRunner) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event := <-runner.Events():
+			if err := writer.WriteJSON(ctx, event); err != nil {
+				return
+			}
+			if event.Type == subtitle.EventSessionError {
+				_ = conn.Close(websocket.StatusInternalError, string(subtitle.EventSessionError))
+				return
+			}
+		case err := <-runner.Errors():
+			message := ""
+			if err != nil {
+				message = err.Error()
+			}
+			_ = writer.WriteJSON(ctx, Event{
+				Type:    EventSessionError,
+				Code:    ErrorASTSession,
+				Message: message,
+			})
+			_ = conn.Close(websocket.StatusInternalError, ErrorASTSession)
+			return
+		}
+	}
+}
+
+type webSocketEventWriter struct {
+	conn *websocket.Conn
+	mu   sync.Mutex
+}
+
+func newWebSocketEventWriter(conn *websocket.Conn) *webSocketEventWriter {
+	return &webSocketEventWriter{conn: conn}
+}
+
+func (w *webSocketEventWriter) WriteJSON(ctx context.Context, event any) error {
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
-	return wsjson.Write(ctx, conn, event)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return wsjson.Write(ctx, w.conn, event)
+}
+
+func writeEvent(ctx context.Context, conn *websocket.Conn, event Event) error {
+	return newWebSocketEventWriter(conn).WriteJSON(ctx, event)
 }
 
 func runPingLoop(ctx context.Context, conn pinger, interval time.Duration, timeout time.Duration) {
