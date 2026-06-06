@@ -87,9 +87,9 @@ Goal: backend can start, read config, expose health endpoints, and persist a bas
 - [ ] Create `go.mod` with module name `github.com/panding999/agent-dance/backend`.
 - [ ] Create `cmd/server/main.go`.
 - [ ] Add `internal/config/config.go` with required env vars:
-  - `DOUBAO_APP_KEY`
-  - `DOUBAO_ACCESS_KEY`
+  - `DOUBAO_API_KEY` or legacy `DOUBAO_APP_KEY` / `DOUBAO_APP_ID` + `DOUBAO_ACCESS_KEY`
   - `DOUBAO_AST_RESOURCE_ID`
+  - optional `DOUBAO_AST_MODEL_ID` for the Seed LiveInterpret 2.0 console model id
   - `DOUBAO_AUC_RESOURCE_ID`
   - `DATABASE_URL`
   - `UPLOAD_DIR`
@@ -158,8 +158,11 @@ Goal: backend can create a Doubao AST session and send audio packets.
 - [x] Add `internal/doubao/ast/client.go`.
 - [x] Load AST endpoint `wss://openspeech.bytedance.com/api/v4/ast/v2/translate`.
 - [x] Attach required headers:
+  - `X-Api-Key` when `DOUBAO_API_KEY` is configured
   - `X-Api-App-Key`
+  - `X-Api-App-Id` + `X-Api-Access-Key` for legacy app credentials
   - `X-Api-Resource-Id: volc.service_type.10053`
+- [x] Carry optional Seed LiveInterpret 2.0 model id through `request_meta` for the generated codec.
 - [x] Add protobuf request and response wrappers.
 - [x] Implement StartSession with:
   - `mode=s2t` or `mode=s2s`
@@ -172,8 +175,9 @@ Goal: backend can create a Doubao AST session and send audio packets.
   - `source_audio.channel=1`
   - `corpus` terms
 - [x] Implement SendAudio packet call.
+- [x] Wait for provider `SessionStarted` before sending audio packets.
 - [x] Implement FinishSession.
-- [x] Capture provider logid and errors.
+- [x] Capture provider logid, decoded provider events, and async read errors.
 
 Verification:
 
@@ -394,12 +398,13 @@ Exit criteria:
 
 Before real Doubao smoke testing, prepare:
 
-- `DOUBAO_APP_KEY`
-- `DOUBAO_ACCESS_KEY`
+- `DOUBAO_API_KEY`, or legacy `DOUBAO_APP_KEY` / `DOUBAO_APP_ID` + `DOUBAO_ACCESS_KEY`
 - `DOUBAO_AST_RESOURCE_ID=volc.service_type.10053`
+- `DOUBAO_AST_MODEL_ID` set locally to the Seed LiveInterpret 2.0 model id
 - `DOUBAO_AUC_RESOURCE_ID=volc.bigasr.auc_turbo`
 - confirmed language pair, for example `en -> zh`
 - one 30-second English demo clip
 - one glossary sample, for example `RAG -> 检索增强生成`
+- official AST protobuf generated codec from `protos.tar.gz` or `ast_go_client.zip`
 
 Real provider tests should be manual or gated by `RUN_DOUBAO_SMOKE=1`, so CI does not spend quota or fail without credentials.

@@ -9,8 +9,6 @@ import (
 const defaultHTTPAddr = ":8080"
 
 var requiredEnvKeys = []string{
-	"DOUBAO_APP_KEY",
-	"DOUBAO_ACCESS_KEY",
 	"DOUBAO_AST_RESOURCE_ID",
 	"DOUBAO_AUC_RESOURCE_ID",
 	"DATABASE_URL",
@@ -18,9 +16,12 @@ var requiredEnvKeys = []string{
 }
 
 type Config struct {
+	DoubaoAPIKey        string
+	DoubaoAppID         string
 	DoubaoAppKey        string
 	DoubaoAccessKey     string
 	DoubaoASTResourceID string
+	DoubaoASTModelID    string
 	DoubaoAUCResourceID string
 	DatabaseURL         string
 	UploadDir           string
@@ -34,6 +35,14 @@ func LoadFromEnv() (Config, error) {
 			missing = append(missing, key)
 		}
 	}
+
+	apiKey := strings.TrimSpace(os.Getenv("DOUBAO_API_KEY"))
+	appID := strings.TrimSpace(os.Getenv("DOUBAO_APP_ID"))
+	appKey := strings.TrimSpace(os.Getenv("DOUBAO_APP_KEY"))
+	accessKey := strings.TrimSpace(os.Getenv("DOUBAO_ACCESS_KEY"))
+	if !hasDoubaoAuth(apiKey, appID, appKey, accessKey) {
+		missing = append(missing, "DOUBAO_API_KEY or DOUBAO_APP_KEY or DOUBAO_APP_ID+DOUBAO_ACCESS_KEY")
+	}
 	if len(missing) > 0 {
 		return Config{}, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
 	}
@@ -44,12 +53,19 @@ func LoadFromEnv() (Config, error) {
 	}
 
 	return Config{
-		DoubaoAppKey:        strings.TrimSpace(os.Getenv("DOUBAO_APP_KEY")),
-		DoubaoAccessKey:     strings.TrimSpace(os.Getenv("DOUBAO_ACCESS_KEY")),
+		DoubaoAPIKey:        apiKey,
+		DoubaoAppID:         appID,
+		DoubaoAppKey:        appKey,
+		DoubaoAccessKey:     accessKey,
 		DoubaoASTResourceID: strings.TrimSpace(os.Getenv("DOUBAO_AST_RESOURCE_ID")),
+		DoubaoASTModelID:    strings.TrimSpace(os.Getenv("DOUBAO_AST_MODEL_ID")),
 		DoubaoAUCResourceID: strings.TrimSpace(os.Getenv("DOUBAO_AUC_RESOURCE_ID")),
 		DatabaseURL:         strings.TrimSpace(os.Getenv("DATABASE_URL")),
 		UploadDir:           strings.TrimSpace(os.Getenv("UPLOAD_DIR")),
 		HTTPAddr:            httpAddr,
 	}, nil
+}
+
+func hasDoubaoAuth(apiKey string, appID string, appKey string, accessKey string) bool {
+	return apiKey != "" || appKey != "" || (appID != "" && accessKey != "")
 }

@@ -50,10 +50,12 @@ type Codec interface {
 	EncodeStartSession(StartSessionRequest) ([]byte, error)
 	EncodeTaskRequest(TaskRequest) ([]byte, error)
 	EncodeFinishSession(FinishSessionRequest) ([]byte, error)
+	DecodeProviderEvent([]byte) (ProviderEvent, error)
 }
 
 type StartSessionParams struct {
 	SessionID      string
+	ModelID        string
 	Mode           SessionMode
 	SourceLanguage string
 	TargetLanguage string
@@ -75,6 +77,7 @@ type StartSessionRequest struct {
 
 type RequestMeta struct {
 	SessionID string
+	ModelID   string
 }
 
 type UserConfig struct {
@@ -155,7 +158,10 @@ func newStartSessionRequest(params StartSessionParams) (StartSessionRequest, err
 	}
 
 	return StartSessionRequest{
-		RequestMeta: RequestMeta{SessionID: strings.TrimSpace(params.SessionID)},
+		RequestMeta: RequestMeta{
+			SessionID: strings.TrimSpace(params.SessionID),
+			ModelID:   strings.TrimSpace(params.ModelID),
+		},
 		Event:       EventStartSession,
 		User:        params.User,
 		SourceAudio: DefaultSourceAudioConfig(),
