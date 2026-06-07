@@ -32,6 +32,7 @@ AGENTS.md                    协作、提交和验证规范
 安装前端依赖并启动页面：
 
 ```powershell
+Copy-Item .env.example .env.local
 npm install
 npm run dev
 ```
@@ -43,10 +44,11 @@ npm run lint
 npm run build
 ```
 
-启动后端服务：
+复制后端示例配置，补齐 Doubao 凭据、数据库路径和上传目录后启动服务：
 
 ```powershell
 cd backend
+Copy-Item .env.example .env
 go run ./cmd/server
 ```
 
@@ -63,7 +65,7 @@ go test ./...
 - `GET /api/sessions/{id}`：查询会话状态。
 - `GET /api/live/ws`：实时音频与字幕事件 WebSocket。
 
-前端当前使用产品化 mock 数据展示实时同传、上传回放和自动纠错流程；后续联调时将工作台的数据源替换为后端会话和 WebSocket 事件。
+前端实时同传模式已接入后端会话和 WebSocket 字幕事件；上传回放模式当前仍使用产品化展示数据，等待上传处理接口落地后再切换到真实数据源。
 
 ## 文档
 

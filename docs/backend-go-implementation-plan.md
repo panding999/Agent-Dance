@@ -87,9 +87,9 @@ Goal: backend can start, read config, expose health endpoints, and persist a bas
 - [ ] Create `go.mod` with module name `github.com/panding999/agent-dance/backend`.
 - [ ] Create `cmd/server/main.go`.
 - [ ] Add `internal/config/config.go` with required env vars:
-  - `DOUBAO_APP_KEY`
-  - `DOUBAO_ACCESS_KEY`
+  - `DOUBAO_API_KEY` or legacy `DOUBAO_APP_KEY` / `DOUBAO_APP_ID` + `DOUBAO_ACCESS_KEY`
   - `DOUBAO_AST_RESOURCE_ID`
+  - optional `DOUBAO_AST_MODEL_ID` for the Seed LiveInterpret 2.0 console model id
   - `DOUBAO_AUC_RESOURCE_ID`
   - `DATABASE_URL`
   - `UPLOAD_DIR`
@@ -155,13 +155,16 @@ Expected result: packetizer splits exactly 2560 bytes per 80ms packet at 16kHz I
 
 Goal: backend can create a Doubao AST session and send audio packets.
 
-- [ ] Add `internal/doubao/ast/client.go`.
-- [ ] Load AST endpoint `wss://openspeech.bytedance.com/api/v4/ast/v2/translate`.
-- [ ] Attach required headers:
+- [x] Add `internal/doubao/ast/client.go`.
+- [x] Load AST endpoint `wss://openspeech.bytedance.com/api/v4/ast/v2/translate`.
+- [x] Attach required headers:
+  - `X-Api-Key` when `DOUBAO_API_KEY` is configured
   - `X-Api-App-Key`
+  - `X-Api-App-Id` + `X-Api-Access-Key` for legacy app credentials
   - `X-Api-Resource-Id: volc.service_type.10053`
-- [ ] Add protobuf request and response wrappers.
-- [ ] Implement StartSession with:
+- [x] Carry optional Seed LiveInterpret 2.0 model id through `request_meta` for the generated codec.
+- [x] Add protobuf request and response wrappers.
+- [x] Implement StartSession with:
   - `mode=s2t` or `mode=s2s`
   - `source_language`
   - `target_language`
@@ -171,9 +174,10 @@ Goal: backend can create a Doubao AST session and send audio packets.
   - `source_audio.bits=16`
   - `source_audio.channel=1`
   - `corpus` terms
-- [ ] Implement SendAudio packet call.
-- [ ] Implement FinishSession.
-- [ ] Capture provider logid and errors.
+- [x] Implement SendAudio packet call.
+- [x] Wait for provider `SessionStarted` before sending audio packets.
+- [x] Implement FinishSession.
+- [x] Capture provider logid, decoded provider events, and async read errors.
 
 Verification:
 
@@ -187,14 +191,14 @@ Expected result: AST client unit tests pass with a fake WebSocket server. Real p
 
 Goal: Doubao AST events are converted into app-level events that the frontend can consume.
 
-- [ ] Define `subtitle.InterpretationEvent`.
-- [ ] Map `SourceSubtitleResponse` to `segment.partial.sourceText`.
-- [ ] Map `SourceSubtitleEnd` to source final metadata.
-- [ ] Map `TranslationSubtitleResponse` to `segment.partial.text`.
-- [ ] Map `TranslationSubtitleEnd` to `segment.final`.
-- [ ] Map `TTSResponse` to `audio.delta`.
-- [ ] Map `SessionFailed` to `session.error`.
-- [ ] Store provider event summaries for debugging.
+- [x] Define `subtitle.InterpretationEvent`.
+- [x] Map `SourceSubtitleResponse` to `segment.partial.sourceText`.
+- [x] Map `SourceSubtitleEnd` to source final metadata.
+- [x] Map `TranslationSubtitleResponse` to `segment.partial.text`.
+- [x] Map `TranslationSubtitleEnd` to `segment.final`.
+- [x] Map `TTSResponse` to `audio.delta`.
+- [x] Map `SessionFailed` to `session.error`.
+- [x] Store provider event summaries for debugging.
 
 Verification:
 
@@ -208,13 +212,13 @@ Expected result: fixture provider events produce stable internal events with con
 
 Goal: the UI receives readable subtitle state instead of raw provider noise.
 
-- [ ] Implement current segment tracking.
-- [ ] Merge source and translation events by provider segment id or time window.
-- [ ] Update current line for partial text.
-- [ ] Persist final segments.
-- [ ] Ignore trivial partial churn.
-- [ ] Emit `segment.final` once per segment.
-- [ ] Add max line length and max duration guards.
+- [x] Implement current segment tracking.
+- [x] Merge source and translation events by provider segment id or time window.
+- [x] Update current line for partial text.
+- [x] Persist final segments.
+- [x] Ignore trivial partial churn.
+- [x] Emit `segment.final` once per segment.
+- [x] Add max line length and max duration guards.
 
 Verification:
 
@@ -228,13 +232,13 @@ Expected result: partial updates do not create history rows; final events persis
 
 Goal: one browser session can flow through browser WebSocket -> packetizer -> Doubao AST -> normalized events -> frontend.
 
-- [ ] Implement `live.SessionRunner`.
-- [ ] Connect browser WebSocket and AST client lifecycle.
-- [ ] Forward packetized audio to AST.
-- [ ] Forward normalized subtitle events to browser.
-- [ ] Forward `audio.delta` when `mode=s2s`.
-- [ ] On browser close, finish AST session.
-- [ ] On AST failure, close browser session with reason.
+- [x] Implement `live.SessionRunner`.
+- [x] Connect browser WebSocket and AST client lifecycle.
+- [x] Forward packetized audio to AST.
+- [x] Forward normalized subtitle events to browser.
+- [x] Forward `audio.delta` when `mode=s2s`.
+- [x] On browser close, finish AST session.
+- [x] On AST failure, close browser session with reason.
 
 Verification:
 
@@ -381,7 +385,7 @@ The first sprint should stop at a backend that starts and accepts fake live audi
 - [ ] Add browser WebSocket endpoint.
 - [ ] Add audio frame validation.
 - [ ] Add packetizer unit tests.
-- [ ] Add fake AST server test scaffold.
+- [x] Add fake AST server test scaffold.
 
 Exit criteria:
 
@@ -394,12 +398,13 @@ Exit criteria:
 
 Before real Doubao smoke testing, prepare:
 
-- `DOUBAO_APP_KEY`
-- `DOUBAO_ACCESS_KEY`
+- `DOUBAO_API_KEY`, or legacy `DOUBAO_APP_KEY` / `DOUBAO_APP_ID` + `DOUBAO_ACCESS_KEY`
 - `DOUBAO_AST_RESOURCE_ID=volc.service_type.10053`
+- `DOUBAO_AST_MODEL_ID` set locally to the Seed LiveInterpret 2.0 model id
 - `DOUBAO_AUC_RESOURCE_ID=volc.bigasr.auc_turbo`
 - confirmed language pair, for example `en -> zh`
 - one 30-second English sample clip
 - one glossary sample, for example `RAG -> 检索增强生成`
+- official AST protobuf generated codec from `protos.tar.gz` or `ast_go_client.zip`
 
 Real provider tests should be manual or gated by `RUN_DOUBAO_SMOKE=1`, so CI does not spend quota or fail without credentials.

@@ -7,7 +7,9 @@ import (
 	"net/http"
 
 	"github.com/panding999/agent-dance/backend/internal/config"
+	"github.com/panding999/agent-dance/backend/internal/doubao/ast"
 	"github.com/panding999/agent-dance/backend/internal/httpapi"
+	"github.com/panding999/agent-dance/backend/internal/live"
 	"github.com/panding999/agent-dance/backend/internal/store"
 )
 
@@ -33,7 +35,10 @@ func run() error {
 		}
 	}()
 
-	api := httpapi.NewServer(st)
+	api := httpapi.NewServerWithOptions(st, httpapi.ServerOptions{
+		LiveRunnerFactory: newLiveRunnerFactory(cfg),
+		AllowedOrigins:    cfg.HTTPAllowedOrigins,
+	})
 	server := &http.Server{
 		Addr:    cfg.HTTPAddr,
 		Handler: api.Handler(),
@@ -44,4 +49,22 @@ func run() error {
 		return err
 	}
 	return nil
+}
+
+func newLiveRunnerFactory(cfg config.Config) live.SessionRunnerFactory {
+	return func(store.Session) (*live.SessionRunner, error) {
+		astClient, err := ast.NewClient(ast.ClientOptions{
+			APIKey:     cfg.DoubaoAPIKey,
+			AppID:      cfg.DoubaoAppID,
+			AppKey:     cfg.DoubaoAppKey,
+			AccessKey:  cfg.DoubaoAccessKey,
+			ResourceID: cfg.DoubaoASTResourceID,
+			ModelID:    cfg.DoubaoASTModelID,
+			Codec:      ast.ProtobufCodec{},
+		})
+		if err != nil {
+			return nil, err
+		}
+		return live.NewSessionRunner(astClient, live.SessionRunnerOptions{})
+	}
 }

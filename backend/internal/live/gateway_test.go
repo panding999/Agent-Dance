@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/panding999/agent-dance/backend/internal/audio"
+	"github.com/panding999/agent-dance/backend/internal/doubao/ast"
 	"github.com/panding999/agent-dance/backend/internal/store"
+	"github.com/panding999/agent-dance/backend/internal/subtitle"
 	"nhooyr.io/websocket"
 )
 
@@ -198,6 +200,100 @@ func TestGatewayRejectsDuplicateLiveConnection(t *testing.T) {
 	}
 }
 
+func TestGatewayAllowsConfiguredCrossOriginWebSocket(t *testing.T) {
+	st, session := newLiveTestStore(t)
+	server := httptest.NewServer(NewGatewayWithOptions(st, audio.NewSessionChunkCache(4), GatewayOptions{
+		OriginPatterns: []string{"localhost:3000"},
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/live/ws?sessionId=" + session.ID
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Origin": []string{"http://localhost:3000"}},
+	})
+	if err != nil {
+		t.Fatalf("dial configured origin websocket: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "test done")
+
+	ready := readEvent(t, conn)
+	if ready.Type != EventSessionReady {
+		t.Fatalf("ready event type = %q", ready.Type)
+	}
+}
+
+func TestGatewayRejectsUnconfiguredCrossOriginWebSocket(t *testing.T) {
+	st, session := newLiveTestStore(t)
+	server := httptest.NewServer(NewGateway(st, audio.NewSessionChunkCache(4)))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/live/ws?sessionId=" + session.ID
+	_, resp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Origin": []string{"http://localhost:3000"}},
+	})
+	if err == nil {
+		t.Fatal("dial unconfigured origin succeeded, want failure")
+	}
+	if resp == nil || resp.StatusCode != http.StatusForbidden {
+		if resp == nil {
+			t.Fatal("dial unconfigured origin response is nil, want 403")
+		}
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestGatewayWithRunnerForwardsAudioToASTAndSubtitleToBrowser(t *testing.T) {
+	ctx := context.Background()
+	st, session := newLiveTestStore(t)
+	fakeAST := newFakeASTClient()
+	server := httptest.NewServer(NewGatewayWithRunner(st, audio.NewSessionChunkCache(4), func(session store.Session) (*SessionRunner, error) {
+		return NewSessionRunner(fakeAST, SessionRunnerOptions{})
+	}))
+	defer server.Close()
+
+	conn := dialLive(t, server.URL, session.ID)
+	defer conn.Close(websocket.StatusNormalClosure, "test done")
+	_ = readEvent(t, conn)
+
+	if err := conn.Write(ctx, websocket.MessageBinary, makeBrowserFrame(1, 1000, makeRunnerPCM(audio.DoubaoPacketBytes))); err != nil {
+		t.Fatalf("write audio frame: %v", err)
+	}
+	accepted := readEvent(t, conn)
+	if accepted.Type != EventAudioFrameAccepted {
+		t.Fatalf("event type = %q, want %q", accepted.Type, EventAudioFrameAccepted)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if len(fakeAST.sentPackets()) == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	packets := fakeAST.sentPackets()
+	if len(packets) != 1 {
+		t.Fatalf("fake AST packets = %d, want 1", len(packets))
+	}
+
+	fakeAST.emit(ast.ProviderEvent{
+		Event:       ast.EventTranslationSubtitleResponse,
+		SegmentID:   "seg-1",
+		Text:        "你好",
+		StartTimeMS: 1000,
+		EndTimeMS:   1200,
+	})
+	got := readSubtitleEvent(t, conn)
+	if got.Type != subtitle.EventSegmentPartial || got.Text != "你好" {
+		t.Fatalf("subtitle event = %+v", got)
+	}
+}
+
 func newLiveTestStore(t *testing.T) (*store.SQLiteStore, store.Session) {
 	t.Helper()
 
@@ -254,6 +350,27 @@ func readEvent(t *testing.T, conn *websocket.Conn) Event {
 	var event Event
 	if err := json.Unmarshal(payload, &event); err != nil {
 		t.Fatalf("decode event: %v", err)
+	}
+	return event
+}
+
+func readSubtitleEvent(t *testing.T, conn *websocket.Conn) subtitle.InterpretationEvent {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	messageType, payload, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("read websocket subtitle event: %v", err)
+	}
+	if messageType != websocket.MessageText {
+		t.Fatalf("message type = %v, want text", messageType)
+	}
+
+	var event subtitle.InterpretationEvent
+	if err := json.Unmarshal(payload, &event); err != nil {
+		t.Fatalf("decode subtitle event: %v", err)
 	}
 	return event
 }

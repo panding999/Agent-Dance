@@ -184,11 +184,13 @@ flowchart LR
 
 - 接口：`wss://openspeech.bytedance.com/api/v4/ast/v2/translate`
 - 协议：WebSocket 二进制 protobuf。
+- 模型：本项目本地配置使用豆包语音同声传译模型 2.0 / Seed LiveInterpret 2.0，对应控制台模型 ID 通过 `DOUBAO_AST_MODEL_ID` 注入，不把具体 ID 提交到仓库。
 - 模式：
   - `s2t`：语音流输入，返回源文和译文字幕。
   - `s2s`：语音流输入，返回源文、译文字幕和目标语音。
 - 鉴权头：
-  - `X-Api-App-Key`
+  - 新版 API Key 路径：`X-Api-Key`
+  - 旧版 App 凭据路径：`X-Api-App-Key`，或 `X-Api-App-Id` + `X-Api-Access-Key`
   - `X-Api-Resource-Id: volc.service_type.10053`
 - 音频要求：
   - 源音频 `format=wav`
@@ -266,6 +268,7 @@ flowchart LR
    - `target_audio`
    - `corpus`
 6. AST 返回 SessionStarted 后，后端通知前端进入 running 状态。
+7. 后端只在收到 `SessionStarted` 后向 AST 发送音频任务包，避免会话尚未建立时提前推送 PCM。
 
 ### 8.2 音频输入
 
