@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+runtime
+uploads
+data
+logs
+cache
+bin
+*.db
+*.sqlite
+*.exe
+*.test
+coverage.out

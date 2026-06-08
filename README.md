@@ -59,6 +59,36 @@ cd backend
 go test ./...
 ```
 
+## Docker Compose 启动
+
+Docker Compose 会统一构建并启动前端与后端：
+
+```powershell
+docker compose up --build -d
+```
+
+启动后访问：
+
+- 前端工作台：`http://localhost:3000`
+- 后端健康检查：`http://localhost:8080/healthz`
+- 后端就绪检查：`http://localhost:8080/readyz`
+
+查看日志和停止服务：
+
+```powershell
+docker compose logs -f
+docker compose down
+```
+
+未配置 Doubao 凭据时，页面和健康检查可以正常访问；点击开始同传会明确提示需要配置凭据。需要真实同传时，在仓库根目录创建不会提交的 `.env`，至少配置一种 Doubao 鉴权方式：
+
+```dotenv
+DOUBAO_API_KEY=replace-with-real-api-key
+DOUBAO_AST_RESOURCE_ID=volc.service_type.10053
+```
+
+SQLite 数据和上传目录分别保存在 `backend-runtime`、`backend-uploads` Docker 命名卷中。当前真实功能链路仅支持麦克风实时同传；音频和视频上传回放仍是前端演示数据，后端上传处理接口尚未实现。
+
 ## 接口概览
 
 - `POST /api/sessions`：创建同传会话。

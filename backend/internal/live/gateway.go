@@ -138,7 +138,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if g.runnerFactory != nil {
 		runner, err = g.runnerFactory(session)
 		if err != nil {
-			_ = g.writeErrorAndClose(r.Context(), writer, conn, ErrorASTSession, "create live session runner failed")
+			_ = g.writeErrorAndClose(r.Context(), writer, conn, ErrorASTSession, err.Error())
 			return
 		}
 		if err := runner.Start(r.Context(), session); err != nil {

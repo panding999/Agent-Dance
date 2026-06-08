@@ -41,9 +41,6 @@ func LoadFromEnv() (Config, error) {
 	appID := strings.TrimSpace(os.Getenv("DOUBAO_APP_ID"))
 	appKey := strings.TrimSpace(os.Getenv("DOUBAO_APP_KEY"))
 	accessKey := strings.TrimSpace(os.Getenv("DOUBAO_ACCESS_KEY"))
-	if !hasDoubaoAuth(apiKey, appID, appKey, accessKey) {
-		missing = append(missing, "DOUBAO_API_KEY or DOUBAO_APP_KEY or DOUBAO_APP_ID+DOUBAO_ACCESS_KEY")
-	}
 	if len(missing) > 0 {
 		return Config{}, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
 	}
@@ -66,6 +63,10 @@ func LoadFromEnv() (Config, error) {
 		HTTPAddr:            httpAddr,
 		HTTPAllowedOrigins:  splitList(os.Getenv("HTTP_ALLOWED_ORIGINS")),
 	}, nil
+}
+
+func (c Config) HasDoubaoCredentials() bool {
+	return hasDoubaoAuth(c.DoubaoAPIKey, c.DoubaoAppID, c.DoubaoAppKey, c.DoubaoAccessKey)
 }
 
 func hasDoubaoAuth(apiKey string, appID string, appKey string, accessKey string) bool {

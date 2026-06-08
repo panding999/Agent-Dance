@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/panding999/agent-dance/backend/internal/config"
@@ -24,5 +25,17 @@ func TestNewLiveRunnerFactoryCreatesRunner(t *testing.T) {
 	}
 	if runner == nil {
 		t.Fatal("factory() returned nil runner")
+	}
+}
+
+func TestNewLiveRunnerFactoryReportsMissingCredentials(t *testing.T) {
+	factory := newLiveRunnerFactory(config.Config{})
+
+	_, err := factory(store.Session{ID: "session-1"})
+	if err == nil {
+		t.Fatal("factory() error = nil, want missing credentials error")
+	}
+	if !strings.Contains(err.Error(), "Doubao credentials are not configured") {
+		t.Fatalf("factory() error = %q", err)
 	}
 }

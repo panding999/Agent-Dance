@@ -53,6 +53,9 @@ func run() error {
 
 func newLiveRunnerFactory(cfg config.Config) live.SessionRunnerFactory {
 	return func(store.Session) (*live.SessionRunner, error) {
+		if !cfg.HasDoubaoCredentials() {
+			return nil, errors.New("Doubao credentials are not configured; set DOUBAO_API_KEY or legacy credentials and restart")
+		}
 		astClient, err := ast.NewClient(ast.ClientOptions{
 			APIKey:     cfg.DoubaoAPIKey,
 			AppID:      cfg.DoubaoAppID,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -291,6 +292,25 @@ func TestGatewayWithRunnerForwardsAudioToASTAndSubtitleToBrowser(t *testing.T) {
 	got := readSubtitleEvent(t, conn)
 	if got.Type != subtitle.EventSegmentPartial || got.Text != "你好" {
 		t.Fatalf("subtitle event = %+v", got)
+	}
+}
+
+func TestGatewayReportsRunnerFactoryError(t *testing.T) {
+	st, session := newLiveTestStore(t)
+	server := httptest.NewServer(NewGatewayWithRunner(st, audio.NewSessionChunkCache(4), func(store.Session) (*SessionRunner, error) {
+		return nil, errors.New("Doubao credentials are not configured")
+	}))
+	defer server.Close()
+
+	conn := dialLive(t, server.URL, session.ID)
+	defer conn.Close(websocket.StatusNormalClosure, "test done")
+
+	event := readEvent(t, conn)
+	if event.Type != EventSessionError {
+		t.Fatalf("event type = %q, want %q", event.Type, EventSessionError)
+	}
+	if event.Message != "Doubao credentials are not configured" {
+		t.Fatalf("event message = %q", event.Message)
 	}
 }
 
