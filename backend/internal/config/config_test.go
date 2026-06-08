@@ -24,11 +24,24 @@ func TestLoadFromEnvReportsMissingRequiredValues(t *testing.T) {
 			t.Fatalf("expected error to mention %s, got %q", key, err.Error())
 		}
 	}
-	if !strings.Contains(err.Error(), "DOUBAO_API_KEY") {
-		t.Fatalf("expected error to mention DOUBAO_API_KEY auth option, got %q", err.Error())
+}
+
+func TestLoadFromEnvAllowsMissingDoubaoCredentials(t *testing.T) {
+	t.Setenv("DOUBAO_API_KEY", "")
+	t.Setenv("DOUBAO_APP_ID", "")
+	t.Setenv("DOUBAO_APP_KEY", "")
+	t.Setenv("DOUBAO_ACCESS_KEY", "")
+	t.Setenv("DOUBAO_AST_RESOURCE_ID", "ast-resource")
+	t.Setenv("DOUBAO_AUC_RESOURCE_ID", "auc-resource")
+	t.Setenv("DATABASE_URL", "runtime/agent-dance.db")
+	t.Setenv("UPLOAD_DIR", "uploads")
+
+	got, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("LoadFromEnv() error = %v", err)
 	}
-	if !strings.Contains(err.Error(), "DOUBAO_APP_KEY") {
-		t.Fatalf("expected error to mention DOUBAO_APP_KEY auth option, got %q", err.Error())
+	if got.HasDoubaoCredentials() {
+		t.Fatal("HasDoubaoCredentials() = true, want false")
 	}
 }
 

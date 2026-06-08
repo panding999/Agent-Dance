@@ -259,7 +259,7 @@ export function LandingPage() {
       });
 
       socket.addEventListener("error", () => {
-        setLiveError("实时同传 WebSocket 连接失败");
+        setLiveError((current) => current ?? "实时同传 WebSocket 连接失败");
         setSessionState("error");
         cleanupLiveConnection();
       });
@@ -371,7 +371,13 @@ function InterpreterWorkspace({
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 active:translate-y-px"
             >
               {liveRunning ? <Stop size={16} weight="fill" /> : <Play size={16} weight="fill" />}
-              {liveRunning ? "停止同传" : mode === "live" ? "开始同传" : "查看回放"}
+              {liveRunning
+                ? "停止同传"
+                : mode === "live"
+                  ? sessionState === "error"
+                    ? "重新开始同传"
+                    : "开始同传"
+                  : "查看回放"}
             </button>
           </div>
         </div>
